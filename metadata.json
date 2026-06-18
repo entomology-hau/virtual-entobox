@@ -1,0 +1,7 @@
+{
+  "name": "Modern Entomology Collection",
+  "description": "A modern, scientific insect pinning assignment tool.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

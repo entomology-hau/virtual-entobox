@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ethical Entomology Collection</title>
+    <meta name="description" content="A client-side teaching tool for ethical virtual insect pinning, labelling, and entomology collection curation." />
+    <!-- Tailwind CDN is kept for simplicity in styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;500;700&family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              serif: ['"DM Serif Display"', 'serif'],
+              sans: ['"DM Sans"', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            },
+            colors: {
+              neutral: {
+                50: '#F9FAFB',
+                100: '#F3F4F6',
+                200: '#E5E7EB',
+                300: '#D1D5DB',
+                400: '#9CA3AF',
+                500: '#6B7280',
+                600: '#4B5563',
+                700: '#374151',
+                800: '#1F2937',
+                900: '#111827',
+                950: '#030712',
+              },
+              indigo: {
+                400: '#818CF8',
+                500: '#6366F1',
+                600: '#4F46E5',
+                700: '#4338CA',
+                800: '#3730A3',
+                900: '#312E81',
+                950: '#1E1B4B',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      .bg-grid-pattern {
+        background-color: #F9FAFB;
+        background-image: linear-gradient(#E5E7EB 1px, transparent 1px), linear-gradient(90deg, #E5E7EB 1px, transparent 1px);
+        background-size: 40px 40px;
+      }
+      .dark .bg-grid-pattern {
+        background-color: #111827;
+        background-image: linear-gradient(#1F2937 1px, transparent 1px), linear-gradient(90deg, #1F2937 1px, transparent 1px);
+      }
+      .checkerboard-soft {
+        background-color: #f8fafc;
+        background-image:
+          linear-gradient(45deg, rgba(148, 163, 184, 0.24) 25%, transparent 25%),
+          linear-gradient(-45deg, rgba(148, 163, 184, 0.24) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.24) 75%),
+          linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.24) 75%);
+        background-size: 20px 20px;
+        background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+      }
+      .dark .checkerboard-soft {
+        background-color: #111827;
+        background-image:
+          linear-gradient(45deg, rgba(75, 85, 99, 0.28) 25%, transparent 25%),
+          linear-gradient(-45deg, rgba(75, 85, 99, 0.28) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, rgba(75, 85, 99, 0.28) 75%),
+          linear-gradient(-45deg, transparent 75%, rgba(75, 85, 99, 0.28) 75%);
+      }
+      .stat-card {
+        border: 1px solid rgba(226, 232, 240, 0.9);
+        border-radius: 1rem;
+        padding: 0.85rem;
+        background: rgba(248, 250, 252, 0.92);
+      }
+      .dark .stat-card {
+        border-color: rgba(55, 65, 81, 0.9);
+        background: rgba(17, 24, 39, 0.78);
+      }
+      .stat-card span {
+        display: block;
+        font-size: 0.62rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #64748b;
+      }
+      .stat-card strong {
+        display: block;
+        font-size: 1.45rem;
+        line-height: 1.15;
+        color: #111827;
+      }
+      .dark .stat-card strong { color: #f9fafb; }
+      .stat-card small {
+        display: block;
+        font-size: 0.68rem;
+        color: #94a3b8;
+      }
+      .specimen-card:focus-visible {
+        outline: 3px solid #818cf8;
+        outline-offset: 3px;
+      }
+      .drawer-shadow {
+        box-shadow: 
+          0 0 0 1px rgba(0,0,0,0.03),
+          0 10px 15px -3px rgba(0,0,0,0.08), 
+          0 4px 6px -2px rgba(0,0,0,0.04),
+          inset 0 2px 4px rgba(0,0,0,0.02);
+      }
+      .dark .drawer-shadow {
+        box-shadow: 
+          0 0 0 1px rgba(255,255,255,0.05),
+          0 10px 15px -3px rgba(0,0,0,0.5), 
+          0 4px 6px -2px rgba(0,0,0,0.3);
+      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 4px; }
+      .dark ::-webkit-scrollbar-thumb { background: #4B5563; }
+      ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
+      .dark ::-webkit-scrollbar-thumb:hover { background: #6B7280; }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
+    "vite": "https://aistudiocdn.com/vite@^7.2.7",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.2"
+  }
+}
+</script>
+</head>
+  <body class="bg-neutral-50 dark:bg-neutral-950 text-neutral-800 dark:text-neutral-100 antialiased h-screen h-[100dvh] overflow-hidden transition-colors duration-300">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>
