@@ -121,6 +121,43 @@ npm run build
 npm run preview
 ```
 
+## Deploying to GitHub Pages
+
+This project is ready for GitHub Pages deployment using GitHub Actions. The workflow file is included at `.github/workflows/deploy.yml`. It installs dependencies, runs `npm run build`, uploads the `dist` folder as a Pages artifact, and deploys it to GitHub Pages whenever changes are pushed to `main` or `master`.
+
+The Vite configuration uses `base: './'`, so the built assets load correctly whether the site is published as a project site, for example `https://USERNAME.github.io/REPOSITORY/`, or moved later to a root/custom-domain Pages site.
+
+### First-time setup
+
+1. Create a new GitHub repository, for example `entobox`.
+2. Unzip this project and push the source files to the repository. Commit the source files, including `.github/workflows/deploy.yml`, `package-lock.json`, `.npmrc`, and `public/.nojekyll`. Do not commit `node_modules` or `dist`.
+3. In the GitHub repository, go to **Settings → Pages**. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+4. Push to `main` or `master`, or run the workflow manually from the **Actions** tab.
+5. After the workflow succeeds, the site will usually be available at `https://USERNAME.github.io/REPOSITORY/`.
+
+### Command-line example
+
+```bash
+git init
+git add .
+git commit -m "Deploy ethical entomology teaching tool"
+git branch -M main
+git remote add origin https://github.com/USERNAME/REPOSITORY.git
+git push -u origin main
+```
+
+Then enable **Settings → Pages → Source → GitHub Actions** in the GitHub web interface.
+
+### Local production check
+
+```bash
+npm ci
+npm run build
+npm run preview
+```
+
+The app is fully client-side. Student records and images are stored in browser `localStorage`; deployment to GitHub Pages does not add a database, server-side login, or central submission storage. Students should still export their `.json` file for submission or backup.
+
 ### Data privacy and limitations
 
 This application runs entirely client-side. Student data and images are not uploaded to a server by the app. Data persists in browser `localStorage` until the browser profile is cleared or storage is exhausted. Exported JSON files are the mechanism for backup, transfer, and assignment submission.
