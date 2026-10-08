@@ -1,919 +1,1411 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { CollectionData, Drawer, Insect, UserProfile } from './types';
-import { Editor } from './components/Editor';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
   Archive,
-  ArrowRight,
-  BadgeCheck,
+  BookOpen,
+  Camera,
+  Check,
   CheckCircle2,
   ChevronDown,
-  ChevronRight,
+  ClipboardCheck,
   Download,
   Eye,
+  FileDown,
+  FolderOpen,
+  Grid2X2,
   Leaf,
-  Lock,
-  LogOut,
-  Maximize2,
-  Minus,
+  List,
   Moon,
+  Pencil,
   Plus,
-  RefreshCw,
+  Printer,
   Search,
-  ShieldCheck,
+  Settings2,
   Sun,
   Trash2,
   Upload,
-  User
-} from 'lucide-react';
+  X,
+} from "lucide-react";
+import { CollectionData, Drawer, Insect } from "./types";
+import {
+  checks,
+  createCollection,
+  createDrawer,
+  download,
+  exportJSON,
+  filename,
+  formatDate,
+  isReady,
+  normaliseCollection,
+  specimenName,
+  toCSV,
+} from "./services/collection";
+import {
+  legacyCollections,
+  loadCollections,
+  preference,
+  saveCollection,
+} from "./services/storage";
+import { Editor } from "./components/Editor";
+import { Dialog } from "./components/Dialog";
+import "./styles.css";
 
-const ADMIN_ID = 'STAFF_ADMIN';
-const ADMIN_PASS = 'admin2024';
-const COLLECTION_SCHEMA_VERSION = 2;
-const DEFAULT_TITLE = 'Virtual Entomology Collection';
+type View = "drawer" | "records" | "guide";
+export default function App() {
+  const [data, setData] = useState<CollectionData>(() => createCollection());
+  const [ready, setReady] = useState(false),
+    [saveStatus, setSaveStatus] = useState("Opening collection…");
+  const [storageError, setStorageError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [dark, setDark] = useState(() => preference("theme") === "dark");
+  const [view, setView] = useState<View>("drawer"),
+    [query, setQuery] = useState(""),
+    [order, setOrder] = useState(""),
+    [needsWork, setNeedsWork] = useState(false),
+    [selectedDrawer, setSelectedDrawer] = useState("all");
+  const [editing, setEditing] = useState<{
+    drawerId: string;
+    slotIndex: number;
+    insect: Insect | null;
+  } | null>(null);
+  const [review, setReview] = useState<CollectionData | null>(null);
+  const [library, setLibrary] = useState<CollectionData[] | null>(null),
+    [settings, setSettings] = useState(false);
+  const [drawerSettings, setDrawerSettings] = useState<Drawer | null>(null);
+  const [exportMenu, setExportMenu] = useState(false);
+  const [profile, setProfile] = useState({
+    title: "",
+    studentName: "",
+    studentId: "",
+  });
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importMode = useRef<"edit" | "review">("edit");
+  const saveSequence = useRef(0);
+  const c = review || data;
+  const readOnly = !!review;
 
-const BrandLogo = ({ size, className, isAdmin = false }: { size: number; className?: string; isAdmin?: boolean }) => {
-  const [error, setError] = useState(false);
-  if (isAdmin) return <ShieldCheck size={size} className={className} />;
-  if (error) return <Archive size={size} className={className} />;
-
-  return (
-    <img
-      src="./logo.png"
-      alt="Entomology logo"
-      className={`object-contain transition-opacity duration-300 ${className}`}
-      style={{ width: size, height: size }}
-      onError={() => setError(true)}
-    />
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let stored: CollectionData[] = [];
+      try {
+        stored = await loadCollections();
+      } catch {
+        setStorageError(
+          "This browser cannot save collections. Export a backup before leaving.",
+        );
+      }
+      const legacy = legacyCollections();
+      const existing = new Set(stored.map((x) => x.collectionId));
+      const recovered = legacy.collections.filter(
+        (x) => !existing.has(x.collectionId),
+      );
+      const available = [...stored, ...recovered];
+      const last = preference("active");
+      const chosen =
+        available.find((x) => x.collectionId === last) ||
+        available[0] ||
+        createCollection();
+      if (!cancelled) {
+        setData(chosen);
+        setReady(true);
+        if (recovered.length)
+          setNotice(
+            `${recovered.length} collection${recovered.length === 1 ? " was" : "s were"} found from the earlier Entobox. Open Collections to access them.`,
+          );
+        if (legacy.failed)
+          setStorageError(
+            "Some older saved data could not be read. It has been left unchanged. Open an exported JSON backup if you have one.",
+          );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    preference("theme", dark ? "dark" : "light");
+  }, [dark]);
+  useEffect(() => {
+    if (!ready) return;
+    const sequence = ++saveSequence.current;
+    setSaveStatus("Saving…");
+    saveCollection(data)
+      .then(() => {
+        if (sequence === saveSequence.current) {
+          setSaveStatus("Saved on this device");
+          setStorageError((previous) =>
+            previous.startsWith("Some older") ? previous : "",
+          );
+          preference("active", data.collectionId!);
+        }
+      })
+      .catch(() => {
+        if (sequence === saveSequence.current) {
+          setSaveStatus("Not saved");
+          setStorageError(
+            "Your changes could not be saved on this device. Export a JSON backup now to keep your work.",
+          );
+        }
+      });
+  }, [data, ready]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 8500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  useEffect(() => {
+    const listener = (e: BeforeUnloadEvent) => {
+      if (saveStatus === "Saving…" || saveStatus === "Not saved") {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", listener);
+    return () => window.removeEventListener("beforeunload", listener);
+  }, [saveStatus]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExportMenu(false);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+  const change = (fn: (d: CollectionData) => CollectionData) =>
+    setData((d) => ({
+      ...fn(d),
+      schemaVersion: 3,
+      lastSaved: new Date().toISOString(),
+    }));
+  const clearFilters = () => {
+    setQuery("");
+    setOrder("");
+    setNeedsWork(false);
+    setSelectedDrawer("all");
+  };
+  const allOrders = useMemo(
+    () => [...new Set(c.insects.map((i) => i.order).filter(Boolean))].sort(),
+    [c.insects],
   );
-};
-
-const createDefaultDrawer = (index = 1): Drawer => ({
-  id: crypto.randomUUID(),
-  title: `Specimen Drawer #${String(index).padStart(2, '0')}`,
-  slotCount: 10,
-  isCollapsed: false
-});
-
-const hasEthicalDocumentation = (insect: Insect) => Boolean(insect.captureMethod) && Boolean(insect.ethicalNotes?.trim()) && insect.ethicalNotes.trim().length >= 10;
-
-const getSpecimenCompletion = (insect: Insect) => {
-  const checks = [
-    Boolean(insect.imageUrl),
-    Boolean(insect.pinPosition),
-    Boolean(insect.order?.trim()) || Boolean(insect.family?.trim()),
-    Boolean(insect.dateCaught) && Boolean(insect.location?.trim()) && Boolean(insect.collector?.trim()),
-    hasEthicalDocumentation(insect)
-  ];
-  return Math.round((checks.filter(Boolean).length / checks.length) * 100);
-};
-
-const getSpecimenLabel = (insect: Insect) => {
-  if (insect.genus && insect.species) return `${insect.genus} ${insect.species}`;
-  if (insect.genus) return insect.genus;
-  return insect.family || insect.order || insect.commonName || 'Unidentified';
-};
-
-const normaliseCollection = (data: CollectionData): CollectionData => {
-  const importedInsects = Array.isArray(data.insects) ? data.insects : [];
-
-  if (Array.isArray(data.drawers) && data.drawers.length > 0) {
-    const drawers = data.drawers.map((drawer, index) => {
-      const drawerId = drawer.id || crypto.randomUUID();
-      const highestOccupiedSlot = importedInsects
-        .filter(insect => insect.drawerId === drawer.id)
-        .reduce((max, insect) => Math.max(max, Number.isFinite(insect.slotIndex) ? insect.slotIndex + 1 : 0), 0);
-
+  const families = new Set(
+    c.insects.map((i) => i.family.toLowerCase()).filter(Boolean),
+  ).size;
+  const complete = c.insects.filter(isReady).length;
+  const filtered = c.insects.filter((i) => {
+    const haystack = [
+      specimenName(i),
+      i.commonName,
+      i.order,
+      i.family,
+      i.location,
+      i.habitat,
+      i.collector,
+      i.identificationNotes,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      (!query.trim() || haystack.includes(query.trim().toLowerCase())) &&
+      (!order || i.order === order) &&
+      (!needsWork || !isReady(i)) &&
+      (selectedDrawer === "all" || i.drawerId === selectedDrawer)
+    );
+  });
+  const hasFilter = !!(query.trim() || order || needsWork);
+  const displayedDrawers = c.drawers.filter(
+    (d) => selectedDrawer === "all" || d.id === selectedDrawer,
+  );
+  const nextSlot = (drawer: Drawer, list = c.insects) => {
+    const used = new Set(
+      list.filter((i) => i.drawerId === drawer.id).map((i) => i.slotIndex),
+    );
+    let n = 0;
+    while (used.has(n)) n++;
+    return n;
+  };
+  const addSpecimen = (drawerId?: string, slot?: number) => {
+    if (readOnly) return;
+    if (c.insects.length >= 1000) {
+      setNotice(
+        "This collection has reached 1,000 specimens. Start another collection to add more.",
+      );
+      return;
+    }
+    const d =
+      c.drawers.find(
+        (x) =>
+          x.id ===
+          (drawerId || (selectedDrawer === "all" ? "" : selectedDrawer)),
+      ) || c.drawers[0];
+    if (!d) return;
+    setEditing({
+      drawerId: d.id,
+      slotIndex: slot ?? nextSlot(d),
+      insect: null,
+    });
+  };
+  const saveSpecimen = (i: Insect) => {
+    change((d) => {
+      let record = i;
+      const old = d.insects.find((x) => x.id === i.id);
+      const drawer = d.drawers.find((x) => x.id === i.drawerId) || d.drawers[0];
+      if (
+        (old && old.drawerId !== drawer.id) ||
+        d.insects.some(
+          (x) =>
+            x.id !== i.id &&
+            x.drawerId === drawer.id &&
+            x.slotIndex === i.slotIndex,
+        )
+      )
+        record = { ...i, slotIndex: nextSlot(drawer, d.insects) };
+      record = { ...record, drawerId: drawer.id };
       return {
-        id: drawerId,
-        title: drawer.title || `Specimen Drawer #${String(index + 1).padStart(2, '0')}`,
-        slotCount: Math.max(1, drawer.slotCount || 10, highestOccupiedSlot),
-        isCollapsed: Boolean(drawer.isCollapsed)
+        ...d,
+        insects: [...d.insects.filter((x) => x.id !== record.id), record],
+        drawers: d.drawers.map((x) =>
+          x.id === drawer.id
+            ? { ...x, slotCount: Math.max(x.slotCount, record.slotIndex + 1) }
+            : x,
+        ),
       };
     });
-
-    return {
-      schemaVersion: COLLECTION_SCHEMA_VERSION,
-      title: data.title || DEFAULT_TITLE,
-      studentName: data.studentName || 'Unknown Student',
-      studentId: data.studentId || 'UNKNOWN_ID',
-      drawers,
-      insects: importedInsects,
-      lastSaved: data.lastSaved || new Date().toISOString()
-    };
-  }
-
-  const defaultDrawerId = crypto.randomUUID();
-  const migratedInsects = importedInsects.map((insect, index) => ({
-    ...insect,
-    drawerId: defaultDrawerId,
-    slotIndex: Number.isFinite(insect.slotIndex) ? insect.slotIndex : index
-  }));
-
-  return {
-    schemaVersion: COLLECTION_SCHEMA_VERSION,
-    title: data.title || DEFAULT_TITLE,
-    studentName: data.studentName || 'Unknown Student',
-    studentId: data.studentId || 'UNKNOWN_ID',
-    drawers: [{
-      id: defaultDrawerId,
-      title: data.drawerTitle || 'Specimen Drawer #01',
-      slotCount: Math.max(10, migratedInsects.length),
-      isCollapsed: false
-    }],
-    insects: migratedInsects,
-    lastSaved: data.lastSaved || new Date().toISOString()
+    setEditing(null);
+    setNotice("Specimen saved.");
   };
-};
-
-const matchesSearch = (insect: Insect | null, query: string) => {
-  if (!query.trim()) return true;
-  if (!insect) return false;
-  const haystack = [
-    insect.order,
-    insect.family,
-    insect.genus,
-    insect.species,
-    insect.commonName,
-    insect.location,
-    insect.habitat,
-    insect.microhabitat,
-    insect.captureMethod,
-    insect.collector
-  ].filter(Boolean).join(' ').toLowerCase();
-  return haystack.includes(query.trim().toLowerCase());
-};
-
-export default function App() {
-  const [insects, setInsects] = useState<Insect[]>([]);
-  const [drawers, setDrawers] = useState<Drawer[]>([]);
-  const [collectionTitle, setCollectionTitle] = useState(DEFAULT_TITLE);
-
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  const [editingSlot, setEditingSlot] = useState<{ drawerId: string; index: number } | null>(null);
-  const [darkMode, setDarkMode] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [storageWarning, setStorageWarning] = useState<string | null>(null);
-
-  const [authId, setAuthId] = useState('');
-  const [authPass, setAuthPass] = useState('');
-  const [authName, setAuthName] = useState('');
-  const [authError, setAuthError] = useState('');
-  const [ethicsAccepted, setEthicsAccepted] = useState(false);
-
-  useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark');
-    } else {
-      setDarkMode(false);
-      document.documentElement.classList.remove('dark');
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!currentUser || isAdmin) return;
-
-    const storageKey = `collection_${currentUser.studentId}`;
-    const savedCollection = localStorage.getItem(storageKey);
-
-    if (savedCollection) {
-      try {
-        const data = normaliseCollection(JSON.parse(savedCollection));
-        setInsects(data.insects || []);
-        setDrawers(data.drawers && data.drawers.length ? data.drawers : [createDefaultDrawer()]);
-        setCollectionTitle(data.title || DEFAULT_TITLE);
-      } catch (e) {
-        console.error('Failed to parse saved collection', e);
-        setInsects([]);
-        setDrawers([createDefaultDrawer()]);
-        setCollectionTitle(DEFAULT_TITLE);
-      }
-    } else {
-      setInsects([]);
-      setCollectionTitle(DEFAULT_TITLE);
-      setDrawers([createDefaultDrawer()]);
-    }
-  }, [currentUser, isAdmin]);
-
-  useEffect(() => {
-    if (!currentUser || isAdmin) return;
-
-    const data: CollectionData = {
-      schemaVersion: COLLECTION_SCHEMA_VERSION,
-      title: collectionTitle,
-      studentName: currentUser.fullName,
-      studentId: currentUser.studentId,
-      insects,
-      drawers,
-      lastSaved: new Date().toISOString()
-    };
-
+  const openLibrary = async () => {
     try {
-      localStorage.setItem(`collection_${currentUser.studentId}`, JSON.stringify(data));
-      setStorageWarning(null);
-    } catch (err) {
-      setStorageWarning('Browser storage is full. Export your collection file now, then remove unnecessary field photographs or use fewer high-resolution images.');
-    }
-  }, [insects, collectionTitle, drawers, currentUser, isAdmin]);
-
-  const collectionStats = useMemo(() => {
-    const totalSlots = drawers.reduce((sum, drawer) => sum + drawer.slotCount, 0);
-    const pinnedCount = insects.filter(insect => Boolean(insect.pinPosition)).length;
-    const completeCount = insects.filter(insect => getSpecimenCompletion(insect) === 100).length;
-    const ethicalCount = insects.filter(hasEthicalDocumentation).length;
-    const meanCompletion = insects.length
-      ? Math.round(insects.reduce((sum, insect) => sum + getSpecimenCompletion(insect), 0) / insects.length)
-      : 0;
-
-    return { totalSlots, pinnedCount, completeCount, ethicalCount, meanCompletion };
-  }, [drawers, insects]);
-
-  const toggleTheme = () => {
-    setDarkMode(prev => {
-      const newVal = !prev;
-      if (newVal) {
-        document.documentElement.classList.add('dark');
-        localStorage.setItem('theme', 'dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-        localStorage.setItem('theme', 'light');
-      }
-      return newVal;
-    });
-  };
-
-  const getStoredUsers = () => {
-    try {
-      const storedUsersStr = localStorage.getItem('entomology_users');
-      return storedUsersStr ? JSON.parse(storedUsersStr) as UserProfile[] : [];
+      const saved = await loadCollections();
+      const old = legacyCollections().collections;
+      const map = new Map(
+        [...old, ...saved, data].map((x) => [x.collectionId, x]),
+      );
+      setLibrary([...map.values()]);
     } catch {
-      return [];
+      setLibrary([
+        data,
+        ...legacyCollections().collections.filter(
+          (x) => x.collectionId !== data.collectionId,
+        ),
+      ]);
     }
   };
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-
-    if (authId === ADMIN_ID) {
-      if (authPass === ADMIN_PASS) {
-        setIsAdmin(true);
-        setCurrentUser({ studentId: ADMIN_ID, fullName: 'Staff Administrator', password: '' });
-        return;
-      }
-      setAuthError('Invalid staff password.');
-      return;
-    }
-
-    const storedUsers = getStoredUsers();
-    const user = storedUsers.find(u => u.studentId === authId);
-    if (user && user.password === authPass) {
-      setCurrentUser(user);
-      setIsAdmin(false);
-    } else {
-      setAuthError('Invalid student number or password.');
-    }
+  const chooseFile = (mode: "edit" | "review") => {
+    importMode.current = mode;
+    fileInput.current?.click();
   };
-
-  const handleRegister = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError('');
-
-    if (authId === ADMIN_ID) {
-      setAuthError('This ID is reserved for staff.');
-      return;
-    }
-
-    if (!ethicsAccepted) {
-      setAuthError('Confirm the ethical-use statement before creating an account.');
-      return;
-    }
-
-    const storedUsers = getStoredUsers();
-    if (storedUsers.some(u => u.studentId === authId)) {
-      setAuthError('Student number already registered on this device.');
-      return;
-    }
-
-    const newUser: UserProfile = {
-      studentId: authId,
-      password: authPass,
-      fullName: authName,
-      ethicsAcceptedAt: new Date().toISOString()
-    };
-
-    localStorage.setItem('entomology_users', JSON.stringify([...storedUsers, newUser]));
-    setCurrentUser(newUser);
-    setIsAdmin(false);
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setIsAdmin(false);
-    setInsects([]);
-    setDrawers([]);
-    setSearchQuery('');
-    setAuthId('');
-    setAuthPass('');
-    setAuthName('');
-    setEthicsAccepted(false);
-  };
-
-  const handleAddDrawer = () => {
-    setDrawers(prev => [...prev, createDefaultDrawer(prev.length + 1)]);
-  };
-
-  const handleDeleteDrawer = (id: string) => {
-    const hasInsects = insects.some(i => i.drawerId === id);
-    if (hasInsects && !confirm('This drawer contains specimens. Deleting it will remove all specimens inside. Continue?')) return;
-    setDrawers(prev => prev.filter(d => d.id !== id));
-    setInsects(prev => prev.filter(i => i.drawerId !== id));
-  };
-
-  const handleToggleDrawer = (id: string) => {
-    setDrawers(prev => prev.map(d => d.id === id ? { ...d, isCollapsed: !d.isCollapsed } : d));
-  };
-
-  const handleUpdateDrawerTitle = (id: string, newTitle: string) => {
-    setDrawers(prev => prev.map(d => d.id === id ? { ...d, title: newTitle } : d));
-  };
-
-  const handleAddSlot = (drawerId: string) => {
-    setDrawers(prev => prev.map(d => d.id === drawerId ? { ...d, slotCount: d.slotCount + 1 } : d));
-  };
-
-  const handleRemoveSlot = (drawerId: string) => {
-    const drawer = drawers.find(d => d.id === drawerId);
-    if (!drawer || drawer.slotCount <= 1) return;
-
-    const lastIndex = drawer.slotCount - 1;
-    const hasInsect = insects.some(i => i.drawerId === drawerId && i.slotIndex === lastIndex);
-    if (hasInsect) {
-      alert('Cannot remove an occupied slot. Delete or move the specimen first.');
-      return;
-    }
-
-    setDrawers(prev => prev.map(d => d.id === drawerId ? { ...d, slotCount: d.slotCount - 1 } : d));
-  };
-
-  const handleSlotClick = (drawerId: string, index: number) => {
-    if (isAdmin) {
-      const hasInsect = insects.some(i => i.drawerId === drawerId && i.slotIndex === index);
-      if (hasInsect) setEditingSlot({ drawerId, index });
-    } else {
-      setEditingSlot({ drawerId, index });
-    }
-  };
-
-  const handleSaveInsect = (insect: Insect) => {
-    setInsects(prev => {
-      const filtered = prev.filter(i => !(i.drawerId === insect.drawerId && i.slotIndex === insect.slotIndex));
-      return [...filtered, insect];
-    });
-    setEditingSlot(null);
-  };
-
-  const handleDeleteInsect = (id: string) => {
-    setInsects(prev => prev.filter(i => i.id !== id));
-    setEditingSlot(null);
-  };
-
-  const handleExport = () => {
-    if (!currentUser) return;
-
-    const data: CollectionData = {
-      schemaVersion: COLLECTION_SCHEMA_VERSION,
-      title: collectionTitle,
-      studentName: currentUser.fullName,
-      studentId: currentUser.studentId,
-      drawers,
-      insects,
-      lastSaved: new Date().toISOString()
-    };
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentUser.studentId}_${currentUser.fullName.replace(/\s+/g, '_')}_Collection.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-
-    alert('Progress exported to file. Keep this JSON file as your submission and backup.');
-  };
-
-  const applyImportedCollection = (normalised: CollectionData) => {
-    setInsects(normalised.insects || []);
-    setCollectionTitle(normalised.title || DEFAULT_TITLE);
-    setDrawers(normalised.drawers && normalised.drawers.length ? normalised.drawers : [createDefaultDrawer()]);
-    setSearchQuery('');
-  };
-
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const importFile = async (file?: File) => {
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(String(event.target?.result || '')) as CollectionData;
-        if (!Array.isArray(parsed.insects)) throw new Error('Missing insects array.');
-        const normalised = normaliseCollection(parsed);
-
-        if (!isAdmin && currentUser && normalised.studentId !== currentUser.studentId) {
-          const proceed = confirm(`This file belongs to ${normalised.studentName} (${normalised.studentId}). Load it into the current account anyway?`);
-          if (!proceed) return;
-        }
-
-        if (!isAdmin && !currentUser) {
-          const restoredUser: UserProfile = {
-            studentId: normalised.studentId,
-            fullName: normalised.studentName,
-            password: '',
-            ethicsAcceptedAt: new Date().toISOString()
-          };
-          localStorage.setItem(`collection_${normalised.studentId}`, JSON.stringify(normalised));
-          const storedUsers = getStoredUsers();
-          if (!storedUsers.some(user => user.studentId === restoredUser.studentId)) {
-            localStorage.setItem('entomology_users', JSON.stringify([...storedUsers, restoredUser]));
-          }
-          setIsAdmin(false);
-          setCurrentUser(restoredUser);
-          return;
-        }
-
-        applyImportedCollection(normalised);
-      } catch (err) {
-        alert('Invalid collection file. Check that you selected an exported Entomology Collection JSON file.');
-      } finally {
-        e.target.value = '';
+    try {
+      if (file.size > 150 * 1024 * 1024)
+        throw new Error(
+          "This file is larger than 150 MB. Use a smaller exported collection.",
+        );
+      const loaded = normaliseCollection(JSON.parse(await file.text()));
+      if (importMode.current === "review") {
+        setReview(loaded);
+        setNotice(
+          "Opened for read-only review. Your own collection is unchanged.",
+        );
+      } else {
+        loaded.collectionId = crypto.randomUUID();
+        loaded.lastSaved = new Date().toISOString();
+        setReview(null);
+        setData(loaded);
+        setNotice("Collection opened as a separate editable copy.");
       }
-    };
-    reader.readAsText(file);
+      setLibrary(null);
+      clearFilters();
+      setView("drawer");
+    } catch (e) {
+      setNotice(
+        e instanceof Error
+          ? e.message
+          : "The collection file could not be opened.",
+      );
+    } finally {
+      if (fileInput.current) fileInput.current.value = "";
+    }
   };
-
-  const getInsectAtSlot = (drawerId: string, index: number) => insects.find(i => i.drawerId === drawerId && i.slotIndex === index) || null;
-
-  if (!currentUser) {
+  const exportCollection = () => {
+    exportJSON(c);
+    setExportMenu(false);
+    setNotice(
+      "Collection file downloaded with photographs. Keep a backup and submit the JSON file through your VLE.",
+    );
+  };
+  const newCollection = () => {
+    setData(createCollection());
+    setReview(null);
+    setLibrary(null);
+    clearFilters();
+    setView("drawer");
+  };
+  const renameDrawer = () => {
+    if (!drawerSettings) return;
+    const min = Math.max(
+      1,
+      ...c.insects
+        .filter((i) => i.drawerId === drawerSettings.id)
+        .map((i) => i.slotIndex + 1),
+    );
+    const revised = {
+      ...drawerSettings,
+      title: drawerSettings.title.trim() || "Untitled drawer",
+      slotCount: Math.max(
+        min,
+        Math.min(1000, Math.floor(drawerSettings.slotCount) || 8),
+      ),
+    };
+    change((d) => ({
+      ...d,
+      drawers: d.drawers.map((x) => (x.id === revised.id ? revised : x)),
+    }));
+    setDrawerSettings(null);
+  };
+  const deleteDrawer = () => {
+    if (!drawerSettings || c.drawers.length <= 1) return;
+    const count = c.insects.filter(
+      (i) => i.drawerId === drawerSettings.id,
+    ).length;
+    if (
+      !confirm(
+        `Delete this drawer${count ? ` and its ${count} specimen record${count === 1 ? "" : "s"}` : ""}?`,
+      )
+    )
+      return;
+    change((d) => ({
+      ...d,
+      drawers: d.drawers.filter((x) => x.id !== drawerSettings.id),
+      insects: d.insects.filter((x) => x.drawerId !== drawerSettings.id),
+    }));
+    setDrawerSettings(null);
+    setSelectedDrawer("all");
+  };
+  const showSettings = () => {
+    setProfile({
+      title: data.title,
+      studentName: data.studentName,
+      studentId: data.studentId,
+    });
+    setSettings(true);
+  };
+  const renderCard = (i: Insect) => (
+    <button
+      className="specimen-card"
+      key={i.id}
+      onClick={() =>
+        setEditing({ drawerId: i.drawerId, slotIndex: i.slotIndex, insect: i })
+      }
+      aria-label={`Open ${specimenName(i)}`}
+    >
+      <div className="specimen-card-top">
+        <span className="record-number">
+          {String(i.slotIndex + 1).padStart(2, "0")}
+        </span>
+        <span
+          className={`record-status ${isReady(i) ? "complete" : ""}`}
+          title={
+            isReady(i)
+              ? "All record checks filled"
+              : "Some record information is missing"
+          }
+        >
+          {isReady(i) ? <CheckCircle2 size={14} /> : <Pencil size={13} />}{" "}
+          {isReady(i) ? "Documented" : "Draft"}
+        </span>
+      </div>
+      <div className="card-image">
+        {i.imageUrl ? (
+          <div className="card-photo-frame">
+            <img src={i.imageUrl} alt={specimenName(i)} loading="lazy" />
+            {i.pinPosition && (
+              <span
+                className="virtual-pin"
+                style={{
+                  left: `${i.pinPosition.x}%`,
+                  top: `${i.pinPosition.y}%`,
+                }}
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        ) : (
+          <Camera size={38} strokeWidth={1} />
+        )}
+        {i.pinPosition && (
+          <span className="pin-indicator">
+            <span /> Virtual pin
+          </span>
+        )}
+      </div>
+      <div className="card-label">
+        <span className="taxon-order">{i.order || "ORDER UNRECORDED"}</span>
+        <h3 className={i.genus ? "scientific" : ""}>{specimenName(i)}</h3>
+        <p>{i.commonName || i.family || "Identification in progress"}</p>
+        <div className="label-rule" />
+        <span>{i.location || "Locality not recorded"}</span>
+        <span>{formatDate(i.dateCaught)}</span>
+      </div>
+    </button>
+  );
+  if (!ready)
     return (
-      <div className="h-screen w-full bg-neutral-100 dark:bg-neutral-950 flex items-center justify-center p-4 transition-colors duration-300 bg-grid-pattern">
-        <div className="bg-white/95 dark:bg-neutral-900/95 backdrop-blur w-full max-w-lg p-8 rounded-3xl shadow-2xl border border-neutral-200 dark:border-neutral-800 flex flex-col">
-          <div className="flex justify-center mb-6">
-            <div className="bg-indigo-600 p-4 rounded-2xl shadow-lg transform rotate-3 hover:rotate-6 transition">
-              <BrandLogo size={42} className="text-white" />
-            </div>
-          </div>
-          <h1 className="text-3xl font-serif font-bold text-center text-neutral-800 dark:text-neutral-100 mb-1">Ethical Entomology Lab</h1>
-          <p className="text-center text-neutral-500 dark:text-neutral-400 mb-6 text-xs uppercase tracking-widest font-bold">Virtual pinning and collection curation</p>
-
-          <div className="grid grid-cols-3 gap-2 mb-6 text-[11px] text-neutral-600 dark:text-neutral-300">
-            <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 p-3 text-center"><Leaf size={16} className="mx-auto mb-1" />Non-lethal workflow</div>
-            <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900 p-3 text-center"><BadgeCheck size={16} className="mx-auto mb-1" />Pinning practice</div>
-            <div className="rounded-xl bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 p-3 text-center"><Archive size={16} className="mx-auto mb-1" />Local storage</div>
-          </div>
-
-          <div className="flex mb-6 bg-neutral-100 dark:bg-neutral-800 p-1 rounded-xl">
-            <button
-              onClick={() => { setAuthMode('login'); setAuthError(''); }}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition ${authMode === 'login' ? 'bg-white dark:bg-neutral-700 shadow text-indigo-600 dark:text-white' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-            >
-              Sign in
-            </button>
-            <button
-              onClick={() => { setAuthMode('register'); setAuthError(''); }}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition ${authMode === 'register' ? 'bg-white dark:bg-neutral-700 shadow text-indigo-600 dark:text-white' : 'text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}`}
-            >
-              Register ID
-            </button>
-          </div>
-
-          <form onSubmit={authMode === 'login' ? handleLogin : handleRegister} className="space-y-4">
-            {authMode === 'register' && (
-              <div>
-                <label className="block text-xs font-bold uppercase text-neutral-500 dark:text-neutral-400 mb-1">Full name</label>
-                <input
-                  type="text"
-                  required
-                  value={authName}
-                  onChange={(e) => setAuthName(e.target.value)}
-                  className="w-full p-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-neutral-900 dark:text-white text-sm"
-                  placeholder="Jane Doe"
-                />
-              </div>
-            )}
-            <div>
-              <label className="block text-xs font-bold uppercase text-neutral-500 dark:text-neutral-400 mb-1">Student number</label>
-              <div className="relative">
-                <User size={16} className="absolute left-3 top-3.5 text-neutral-400" />
-                <input
-                  type="text"
-                  required
-                  value={authId}
-                  onChange={(e) => setAuthId(e.target.value)}
-                  className="w-full pl-10 p-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-neutral-900 dark:text-white text-sm font-mono"
-                  placeholder={authMode === 'login' ? 'ID or staff number' : 'Student ID'}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-bold uppercase text-neutral-500 dark:text-neutral-400 mb-1">Password</label>
-              <div className="relative">
-                <Lock size={16} className="absolute left-3 top-3.5 text-neutral-400" />
-                <input
-                  type="password"
-                  required={authMode === 'login'}
-                  value={authPass}
-                  onChange={(e) => setAuthPass(e.target.value)}
-                  className="w-full pl-10 p-3 bg-neutral-50 dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-neutral-900 dark:text-white text-sm"
-                  placeholder={authMode === 'login' ? 'Enter password' : 'Create password'}
-                />
-              </div>
-            </div>
-
-            {authMode === 'register' && (
-              <label className="flex gap-3 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-900 dark:text-emerald-100 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={ethicsAccepted}
-                  onChange={(e) => setEthicsAccepted(e.target.checked)}
-                  className="mt-0.5 accent-emerald-600"
-                />
-                <span>I will use this as a non-lethal learning tool, document image provenance, and avoid collecting protected or unnecessary specimens for the exercise.</span>
-              </label>
-            )}
-
-            {authError && (
-              <div className="p-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 rounded-lg text-rose-600 dark:text-rose-400 text-xs font-medium text-center">
-                {authError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg hover:shadow-indigo-500/30 transition flex items-center justify-center gap-2 mt-2"
-            >
-              {authMode === 'login' ? 'Access collection' : 'Create account'} <ArrowRight size={18} />
-            </button>
-          </form>
-
-          <div className="mt-8 text-center pt-6 border-t border-neutral-200 dark:border-neutral-800">
-            <p className="text-[10px] text-neutral-400 dark:text-neutral-500 leading-tight mb-2">
-              Data is stored locally on this device. Export JSON files for backup and submission.
-            </p>
-            <label className="cursor-pointer inline-flex items-center gap-2 text-indigo-600 dark:text-indigo-400 hover:underline text-xs font-bold uppercase tracking-wide">
-              <RefreshCw size={12} /> Restore from backup (.json)
-              <input type="file" accept=".json,application/json" onChange={handleImport} className="hidden" />
-            </label>
-          </div>
-        </div>
+      <div className="loading">
+        <Archive size={32} />
+        <h1>Virtual Entobox</h1>
+        <p>Opening your collection…</p>
       </div>
     );
-  }
-
   return (
-    <div className="h-full flex flex-col relative bg-neutral-50 dark:bg-neutral-950 transition-colors duration-300">
-      <header className={`py-4 px-5 md:px-8 shadow-md z-10 flex flex-col md:flex-row justify-between items-center border-b gap-4 md:gap-0 transition-colors ${isAdmin ? 'bg-slate-800 border-slate-700' : 'bg-neutral-900 dark:bg-neutral-950 border-neutral-800'}`}>
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className={`p-2 rounded-xl shadow-lg hidden md:block ${isAdmin ? 'bg-amber-500 shadow-amber-900/50' : 'bg-indigo-600 shadow-indigo-900/50'}`}>
-            <BrandLogo size={24} className="text-white" isAdmin={isAdmin} />
+    <>
+      <a className="skip-link" href="#workspace">
+        Skip to collection
+      </a>
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark">
+            <img src="./logo.png" alt="Entomology at Harper Adams" />
           </div>
-          <div className="flex-1">
-            {isAdmin ? (
-              <div>
-                <h2 className="text-xl font-bold text-white tracking-tight">Instructor grading mode</h2>
-                <div className="flex items-center gap-2 text-amber-400 text-xs font-mono uppercase tracking-wide">Admin access • read only</div>
-              </div>
-            ) : (
-              <>
-                <input
-                  type="text"
-                  value={collectionTitle}
-                  onChange={(e) => setCollectionTitle(e.target.value)}
-                  className="bg-transparent text-xl md:text-2xl font-sans font-bold tracking-tight text-white border-b border-transparent hover:border-neutral-600 focus:border-indigo-500 outline-none w-full md:w-[460px] transition-colors placeholder-neutral-500"
-                  placeholder="Collection title"
-                  aria-label="Collection title"
-                />
-                <div className="flex items-center gap-2 mt-1">
-                  <User size={12} className="text-neutral-400" />
-                  <span className="text-neutral-400 text-xs font-mono tracking-wide uppercase">{currentUser.fullName} ({currentUser.studentId})</span>
-                </div>
-              </>
-            )}
+          <div>
+            <strong>Virtual Entobox</strong>
+            <span>HARPER ADAMS UNIVERSITY</span>
           </div>
         </div>
-
-        <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-          <div className="flex items-center gap-2">
-            {isAdmin ? (
-              <label className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow transition flex items-center gap-2 border border-slate-600">
-                <Upload size={16} /> Load student file (.json)
-                <input type="file" accept=".json,application/json" onChange={handleImport} className="hidden" />
-              </label>
-            ) : (
-              <>
-                <label className="cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white px-3 py-2 rounded-xl text-sm font-medium shadow transition flex items-center gap-2 border border-neutral-700" title="Restore from a previously saved JSON file">
-                  <Upload size={14} /> <span className="hidden md:inline">Load backup</span>
-                  <input type="file" accept=".json,application/json" onChange={handleImport} className="hidden" />
-                </label>
-                <button
-                  onClick={handleExport}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow transition flex items-center gap-2"
-                  title="Download assignment file to save progress"
-                >
-                  <Download size={16} /> Save progress
-                </button>
-              </>
-            )}
-          </div>
-
-          <div className="h-6 w-px bg-neutral-700 mx-1 hidden md:block" />
-
-          {!isAdmin && (
-            <div className="hidden md:flex flex-col items-end">
-              <span className="text-xs text-neutral-400 uppercase font-bold">Specimens</span>
-              <span className="text-sm font-mono font-bold text-neutral-200">{insects.length}/{collectionStats.totalSlots}</span>
-            </div>
-          )}
-
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-full hover:bg-neutral-800 text-neutral-400 hover:text-white transition-colors"
-            title="Toggle dark mode"
-            aria-label="Toggle dark mode"
+        <div className="top-actions">
+          <span
+            className={`save-state ${saveStatus === "Not saved" ? "warning" : ""}`}
+            role="status"
           >
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+            {saveStatus === "Saved on this device" ? <Check size={15} /> : null}
+            {saveStatus}
+          </span>
+          <button className="button top-button" aria-label="Collections" onClick={openLibrary}>
+            <FolderOpen size={17} />
+            <span>Collections</span>
           </button>
-
           <button
-            onClick={handleLogout}
-            className="ml-1 flex items-center gap-2 text-xs font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-900/20 px-3 py-2 rounded-lg transition border border-rose-900/50 hover:border-rose-800"
+            className="icon-button theme-button"
+            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => setDark(!dark)}
           >
-            <LogOut size={14} /> <span className="hidden md:inline">Save & logout</span>
+            {dark ? <Sun size={19} /> : <Moon size={19} />}
           </button>
         </div>
       </header>
-
-      <main className="flex-1 overflow-y-auto w-full p-4 md:p-10 flex flex-col items-center gap-8 bg-grid-pattern pb-32">
-        {storageWarning && (
-          <div className="w-full max-w-7xl rounded-2xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 p-4 flex gap-3 text-sm">
-            <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-            <span>{storageWarning}</span>
+      {review && (
+        <div className="review-banner">
+          <span>
+            <Eye size={18} />
+            <strong>
+              Reviewing {review.studentName || "student collection"}
+            </strong>
+            {review.studentId && ` · ${review.studentId}`} · Read only
+          </span>
+          <button
+            className="button"
+            onClick={() => {
+              setReview(null);
+              clearFilters();
+            }}
+          >
+            Return to my collection
+          </button>
+        </div>
+      )}
+      <div className="app-layout">
+        <aside className="sidebar">
+          <div className="sidebar-title">
+            <span className="eyebrow">COLLECTION CABINET</span>
+            <Archive size={17} />
           </div>
-        )}
-
-        <section className="w-full max-w-7xl rounded-3xl border border-neutral-200 dark:border-neutral-800 bg-white/90 dark:bg-neutral-900/90 backdrop-blur drawer-shadow overflow-hidden">
-          <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-            <div className="lg:col-span-5">
-              <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-3 ${isAdmin ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'}`}>
-                {isAdmin ? <ShieldCheck size={14} /> : <Leaf size={14} />}
-                {isAdmin ? 'Read-only assessment' : 'Ethical virtual collection'}
-              </div>
-              <h1 className="text-2xl md:text-3xl font-serif text-neutral-900 dark:text-neutral-100 mb-2">
-                {isAdmin ? 'Review pin placement, provenance, and taxonomic evidence.' : 'Practise curation without requiring lethal collection.'}
-              </h1>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                Each record now prompts students to document image provenance, non-lethal handling, pinning rationale, identification confidence, and ecological context.
+          <button
+            className={`side-link ${selectedDrawer === "all" && view !== "guide" ? "active" : ""}`}
+            onClick={() => {
+              setSelectedDrawer("all");
+              if (view === "guide") setView("drawer");
+            }}
+          >
+            <Grid2X2 size={18} />
+            <span>All specimens</span>
+            <b>{c.insects.length}</b>
+          </button>
+          <div className="drawer-nav">
+            {c.drawers.map((d, n) => (
+              <button
+                key={d.id}
+                className={`side-link ${selectedDrawer === d.id && view !== "guide" ? "active" : ""}`}
+                onClick={() => {
+                  setSelectedDrawer(d.id);
+                  setView("drawer");
+                }}
+              >
+                <span className="drawer-index">
+                  {String(n + 1).padStart(2, "0")}
+                </span>
+                <span>{d.title}</span>
+                <b>{c.insects.filter((i) => i.drawerId === d.id).length}</b>
+              </button>
+            ))}
+          </div>
+          {!readOnly && (
+            <button
+              className="side-link add-drawer"
+              onClick={() => {
+                if (c.drawers.length >= 100) {
+                  setNotice("This collection has reached 100 drawers.");
+                  return;
+                }
+                const d = createDrawer(
+                  `Drawer ${String(c.drawers.length + 1).padStart(2, "0")}`,
+                );
+                change((x) => ({ ...x, drawers: [...x.drawers, d] }));
+                setSelectedDrawer(d.id);
+                setDrawerSettings(d);
+                setView("drawer");
+              }}
+            >
+              <Plus size={17} />
+              <span>Add drawer</span>
+            </button>
+          )}
+          <div className="sidebar-bottom">
+            <button
+              className={`side-link ${view === "guide" ? "active" : ""}`}
+              onClick={() => setView("guide")}
+            >
+              <BookOpen size={18} />
+              <span>Practical guide</span>
+            </button>
+            <button className="side-link" onClick={() => chooseFile("review")}>
+              <ClipboardCheck size={18} />
+              <span>Review a submission</span>
+            </button>
+            <div className="local-note">
+              <Leaf size={21} />
+              <strong>A collection through observation</strong>
+              <p>
+                Photograph, identify and document. Export your collection
+                regularly to keep a backup.
               </p>
             </div>
-
-            <div className="lg:col-span-4 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-2 gap-3">
-              <div className="stat-card"><span>Total</span><strong>{insects.length}</strong><small>{collectionStats.totalSlots} slots</small></div>
-              <div className="stat-card"><span>Pinned</span><strong>{collectionStats.pinnedCount}</strong><small>thorax/notum</small></div>
-              <div className="stat-card"><span>Ethics</span><strong>{collectionStats.ethicalCount}</strong><small>documented</small></div>
-              <div className="stat-card"><span>Complete</span><strong>{collectionStats.completeCount}</strong><small>{collectionStats.meanCompletion}% mean</small></div>
+          </div>
+        </aside>
+        <main id="workspace" className="workspace">
+          {storageError && (
+            <div className="notice error" role="alert">
+              {storageError}
+              <button className="button" onClick={exportCollection}>
+                <Download size={16} /> Export backup
+              </button>
             </div>
-
-            <div className="lg:col-span-3">
-              <label className="block text-[10px] uppercase tracking-widest font-bold text-neutral-400 mb-2">Find specimens</label>
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-3 text-neutral-400" />
-                <input
-                  type="search"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Order, family, site..."
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-950 text-sm text-neutral-900 dark:text-neutral-100 focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
+          )}
+          <div className="collection-heading">
+            <div>
+              <div className="eyebrow">
+                {readOnly ? "STUDENT SUBMISSION" : "YOUR DIGITAL COLLECTION"}
               </div>
-              {!isAdmin && (
-                <p className="mt-3 text-[11px] text-neutral-500 dark:text-neutral-400 leading-relaxed">Use Save progress before submission. The JSON file contains images and metadata.</p>
+              <h1>{c.title || "My insect collection"}</h1>
+              <div className="collection-meta">
+                {c.studentName || "Student details not added"}
+                {c.studentId && ` · ${c.studentId}`}
+                {!readOnly && (
+                  <button className="text-button" onClick={showSettings}>
+                    <Pencil size={13} />
+                    {c.studentName ? "Edit details" : "Add your details"}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="heading-actions">
+              <div className="export-wrap">
+                <button
+                  className="button"
+                  onClick={() => setExportMenu(!exportMenu)}
+                  aria-expanded={exportMenu}
+                >
+                  <Download size={17} /> Export
+                  <ChevronDown size={14} />
+                </button>
+                {exportMenu && (
+                  <>
+                    <button
+                      className="menu-dismiss"
+                      onClick={() => setExportMenu(false)}
+                      aria-label="Close export menu"
+                    />
+                    <div className="export-menu">
+                      <button onClick={exportCollection}>
+                        <FileDown size={18} />
+                        <div>
+                          <strong>Collection file (.json)</strong>
+                          <small>
+                            All records and photographs · backup / submission
+                          </small>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          download(
+                            toCSV(c),
+                            filename(c.title) + ".csv",
+                            "text/csv;charset=utf-8",
+                          );
+                          setExportMenu(false);
+                        }}
+                      >
+                        <List size={18} />
+                        <div>
+                          <strong>Record table (.csv)</strong>
+                          <small>
+                            Metadata for a spreadsheet · no photographs
+                          </small>
+                        </div>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setExportMenu(false);
+                          window.print();
+                        }}
+                      >
+                        <Printer size={18} />
+                        <div>
+                          <strong>Print collection / save PDF</strong>
+                          <small>
+                            Specimens, labels and identification evidence
+                          </small>
+                        </div>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              {!readOnly && (
+                <button
+                  className="button primary"
+                  onClick={() => addSpecimen()}
+                >
+                  <Plus size={18} /> Add specimen
+                </button>
               )}
             </div>
           </div>
-        </section>
-
-        {drawers.map((drawer) => {
-          const drawerInsects = insects.filter(insect => insect.drawerId === drawer.id);
-          return (
-            <div key={drawer.id} className="w-full max-w-7xl bg-white dark:bg-neutral-900 rounded-2xl drawer-shadow border border-neutral-200 dark:border-neutral-800 relative transition-all duration-300 overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-300 via-indigo-300 to-amber-300 dark:from-emerald-900 dark:via-indigo-900 dark:to-amber-900 opacity-80" />
-
-              <div
-                className="p-5 md:p-7 border-b border-neutral-100 dark:border-neutral-800 flex justify-between items-center group cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
-                onClick={() => handleToggleDrawer(drawer.id)}
-              >
-                <div className="flex items-center gap-4 flex-1 min-w-0">
+          <div className="collection-summary">
+            <div>
+              <strong>{c.insects.length}</strong>
+              <span>Specimens</span>
+            </div>
+            <div>
+              <strong>{allOrders.length}</strong>
+              <span>Orders</span>
+            </div>
+            <div>
+              <strong>{families}</strong>
+              <span>Families</span>
+            </div>
+            <button
+              onClick={() => {
+                setNeedsWork(!needsWork);
+                setView("records");
+              }}
+              title="Show records with missing information"
+            >
+              <strong>
+                {complete}
+                <span> / {c.insects.length}</span>
+              </strong>
+              <span>Records documented</span>
+            </button>
+            <span className="summary-caption">
+              Record checks assess completeness, not accuracy.
+            </span>
+          </div>
+          {view === "guide" ? (
+            <Guide onAdd={() => addSpecimen()} readOnly={readOnly} />
+          ) : (
+            <>
+              <div className="collection-toolbar">
+                <div className="segmented" aria-label="Collection display">
                   <button
-                    onClick={(e) => { e.stopPropagation(); handleToggleDrawer(drawer.id); }}
-                    className="p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition"
-                    aria-label={drawer.isCollapsed ? 'Expand drawer' : 'Collapse drawer'}
+                    className={view === "drawer" ? "active" : ""}
+                    aria-pressed={view === "drawer"}
+                    onClick={() => setView("drawer")}
                   >
-                    {drawer.isCollapsed ? <ChevronRight size={20} /> : <ChevronDown size={20} />}
+                    <Grid2X2 size={17} /> Drawers
                   </button>
-
-                  <div className="flex-1 min-w-0">
-                    {isAdmin ? (
-                      <h2 className="text-neutral-700 dark:text-neutral-200 font-serif text-2xl italic truncate">{drawer.title}</h2>
-                    ) : (
-                      <input
-                        type="text"
-                        value={drawer.title}
-                        onChange={(e) => handleUpdateDrawerTitle(drawer.id, e.target.value)}
-                        className="text-neutral-700 dark:text-neutral-200 font-serif text-2xl italic bg-transparent border-none focus:ring-0 focus:outline-none placeholder-neutral-400 w-full hover:bg-neutral-50 dark:hover:bg-neutral-800 rounded transition px-1"
-                        placeholder="Drawer name"
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label="Drawer name"
-                      />
-                    )}
-                    <div className="text-xs text-neutral-400 dark:text-neutral-500 font-mono uppercase tracking-wide mt-1">
-                      {drawerInsects.length} specimens • {drawer.slotCount} slots
-                    </div>
-                  </div>
+                  <button
+                    className={view === "records" ? "active" : ""}
+                    aria-pressed={view === "records"}
+                    onClick={() => setView("records")}
+                  >
+                    <List size={17} /> Records
+                  </button>
                 </div>
-
-                {!isAdmin && (
-                  <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                <div className="filters">
+                  <label className="search-box">
+                    <Search size={17} />
+                    <input
+                      placeholder="Search specimens…"
+                      aria-label="Search specimens"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                    {query && (
+                      <button
+                        onClick={() => setQuery("")}
+                        aria-label="Clear search"
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </label>
+                  <select
+                    aria-label="Filter by order"
+                    value={order}
+                    onChange={(e) => setOrder(e.target.value)}
+                  >
+                    <option value="">All orders</option>
+                    {allOrders.map((o) => (
+                      <option key={o}>{o}</option>
+                    ))}
+                  </select>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={needsWork}
+                      onChange={(e) => setNeedsWork(e.target.checked)}
+                    />{" "}
+                    Needs details
+                  </label>
+                </div>
+              </div>
+              {!c.insects.length && !hasFilter && !readOnly && (
+                <section className="first-specimen">
+                  <div className="intro-icon">
+                    <Camera size={30} strokeWidth={1.4} />
+                  </div>
+                  <div>
+                    <h2>Start with an observation.</h2>
+                    <p>
+                      Add a photograph, identify the insect and build its
+                      collection label. You can save a draft at any stage.
+                    </p>
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDeleteDrawer(drawer.id); }}
-                      className="p-2 text-rose-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-lg transition"
-                      title="Delete drawer"
-                      aria-label="Delete drawer"
+                      className="text-button"
+                      onClick={() => setView("guide")}
                     >
-                      <Trash2 size={16} />
+                      Read the practical guide
                     </button>
                   </div>
-                )}
-              </div>
-
-              {!drawer.isCollapsed && (
-                <div className="p-6 md:p-10 pt-5">
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6 border-b border-dashed border-neutral-200 dark:border-neutral-800 pb-3">
-                    <span className="text-neutral-400 dark:text-neutral-500 text-xs uppercase tracking-widest font-mono">Specimen drawer</span>
-                    <span className="text-neutral-500 dark:text-neutral-400 text-xs">Completion is based on image, pin, minimum taxonomy, collection details, and ethical provenance.</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-5 md:gap-6 relative z-0">
-                    {Array.from({ length: drawer.slotCount }).map((_, index) => {
-                      const insect = getInsectAtSlot(drawer.id, index);
-                      const labelName = insect ? getSpecimenLabel(insect) : '';
-                      const completion = insect ? getSpecimenCompletion(insect) : 0;
-                      const searchMatch = matchesSearch(insect, searchQuery);
-                      const completionClass = completion === 100
-                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                        : completion >= 60
-                          ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                          : 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300';
-
-                      return (
-                        <div
-                          key={`${drawer.id}-${index}`}
-                          onClick={() => handleSlotClick(drawer.id, index)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              handleSlotClick(drawer.id, index);
-                            }
-                          }}
-                          tabIndex={isAdmin && !insect ? -1 : 0}
-                          role="button"
-                          aria-label={insect ? `Open specimen ${labelName}` : `Add specimen to slot ${index + 1}`}
-                          className={`
-                            aspect-[4/5] relative rounded-2xl border-2 transition-all duration-300 group overflow-hidden specimen-card
-                            ${searchQuery && !searchMatch ? 'opacity-30 grayscale' : 'opacity-100'}
-                            ${isAdmin ? (insect ? 'cursor-pointer' : 'cursor-not-allowed opacity-40') : 'cursor-pointer'}
-                            ${insect
-                              ? 'bg-neutral-50 dark:bg-neutral-800/50 border-neutral-200 dark:border-neutral-700 hover:border-indigo-500 dark:hover:border-indigo-400 hover:shadow-lg hover:-translate-y-1'
-                              : 'bg-neutral-50 dark:bg-neutral-900 border-dashed border-neutral-300 dark:border-neutral-700 hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-indigo-50/30 dark:hover:bg-indigo-900/20'
-                            }
-                          `}
-                        >
-                          {insect ? (
-                            <div className="w-full h-full p-3 flex flex-col items-center">
-                              <div className="flex-1 w-full flex items-center justify-center relative p-2 rounded-xl checkerboard-soft overflow-hidden">
-                                {insect.imageUrl && (
-                                  <img
-                                    src={insect.imageUrl}
-                                    alt={`Specimen: ${labelName}`}
-                                    className="max-w-full max-h-full object-contain drop-shadow-md opacity-95 transition-opacity group-hover:opacity-100 relative z-10"
-                                  />
-                                )}
-                                {insect.pinPosition && (
-                                  <>
-                                    <div
-                                      className="absolute w-[2px] h-8 bg-neutral-700 dark:bg-neutral-200 opacity-60 z-20 pointer-events-none"
-                                      style={{ left: `${insect.pinPosition.x}%`, top: `calc(${insect.pinPosition.y}% + 2px)` }}
-                                    />
-                                    <div
-                                      className="absolute w-3.5 h-3.5 bg-neutral-950 dark:bg-white rounded-full border-2 border-neutral-400 dark:border-neutral-600 shadow-xl z-30 pointer-events-none"
-                                      style={{ left: `calc(${insect.pinPosition.x}% - 7px)`, top: `calc(${insect.pinPosition.y}% - 7px)` }}
-                                    >
-                                      <div className="absolute top-0.5 left-0.5 w-1 h-1 bg-white dark:bg-neutral-900 rounded-full opacity-40" />
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-
-                              <div className="w-full mt-3 pt-2 border-t border-neutral-200 dark:border-neutral-700 text-center">
-                                <p className="font-serif text-sm italic font-semibold text-neutral-800 dark:text-neutral-200 truncate">{labelName}</p>
-                                <p className="font-mono text-[9px] text-neutral-500 dark:text-neutral-400 uppercase tracking-wide truncate mt-0.5">
-                                  {insect.dateCaught || 'No date'} • {insect.family || insect.order || 'Unknown'}
-                                </p>
-                                <div className="flex items-center justify-center gap-1 mt-2">
-                                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${completionClass}`}>{completion}%</span>
-                                  {hasEthicalDocumentation(insect) && <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 flex items-center gap-1"><Leaf size={10} /> ethics</span>}
-                                </div>
-                              </div>
-
-                              <div className="absolute inset-0 bg-indigo-900/5 dark:bg-indigo-400/5 opacity-0 group-hover:opacity-100 transition flex items-center justify-center pointer-events-none">
-                                <div className="bg-white dark:bg-neutral-800 p-2 rounded-full shadow-lg text-indigo-700 dark:text-indigo-400 transform scale-75 group-hover:scale-100 transition">
-                                  {isAdmin ? <Eye size={20} /> : <Maximize2 size={20} />}
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center text-neutral-300 dark:text-neutral-600 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors">
-                              <Plus size={32} strokeWidth={1.5} />
-                              <span className="text-[10px] font-mono mt-3 uppercase tracking-widest font-medium">Slot {index + 1}</span>
-                              {!isAdmin && <span className="text-[10px] mt-1 opacity-70">Add record</span>}
-                            </div>
-                          )}
-
-                          <div className="absolute top-2 left-2 text-[9px] font-mono text-neutral-300 dark:text-neutral-600 group-hover:text-indigo-500 dark:group-hover:text-indigo-400">
-                            {String(index + 1).padStart(2, '0')}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {!isAdmin && (
-                      <div className="flex flex-col justify-center gap-4 py-8">
-                        <button
-                          onClick={() => handleAddSlot(drawer.id)}
-                          className="aspect-square rounded-2xl border-2 border-dashed border-neutral-200 dark:border-neutral-800 hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20 text-neutral-400 hover:text-indigo-500 transition flex flex-col items-center justify-center gap-2 group"
-                          title="Add slot"
-                        >
-                          <Plus size={24} />
-                          <span className="text-[10px] font-bold uppercase tracking-widest">Add slot</span>
-                        </button>
-                        <button
-                          onClick={() => handleRemoveSlot(drawer.id)}
-                          disabled={drawer.slotCount <= 1}
-                          className="p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-neutral-400 hover:text-rose-500 transition flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wide disabled:opacity-40 disabled:cursor-not-allowed"
-                          title="Remove last slot"
-                        >
-                          <Minus size={14} /> Remove
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <button className="button" onClick={() => chooseFile("edit")}>
+                    <Upload size={17} /> Open existing collection
+                  </button>
+                </section>
+              )}
+              {hasFilter && (
+                <div className="filter-count">
+                  <span>
+                    {filtered.length} of {c.insects.length} specimens match
+                  </span>
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setQuery("");
+                      setOrder("");
+                      setNeedsWork(false);
+                    }}
+                  >
+                    Clear filters
+                  </button>
                 </div>
               )}
-            </div>
-          );
-        })}
-
-        {!isAdmin && (
-          <button
-            onClick={handleAddDrawer}
-            className="w-full max-w-7xl py-6 rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-800 hover:border-indigo-500 dark:hover:border-indigo-400 text-neutral-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition flex flex-col items-center justify-center gap-2 group hover:bg-neutral-50 dark:hover:bg-neutral-900/50"
-          >
-            <div className="p-3 bg-neutral-200 dark:bg-neutral-800 rounded-full group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/50 transition">
-              <Plus size={24} />
-            </div>
-            <span className="font-serif font-bold text-lg">Add new specimen drawer</span>
-          </button>
-        )}
-      </main>
-
-      {editingSlot !== null && (
+              {view === "drawer" ? (
+                <div className="drawers">
+                  {displayedDrawers.map((d, n) => {
+                    const records = filtered.filter((i) => i.drawerId === d.id);
+                    const slots = new Map(records.map((i) => [i.slotIndex, i]));
+                    if (hasFilter && !records.length) return null;
+                    return (
+                      <section className="collection-drawer" key={d.id}>
+                        <header className="drawer-heading">
+                          <div>
+                            <span className="drawer-number">
+                              {String(c.drawers.indexOf(d) + 1).padStart(
+                                2,
+                                "0",
+                              )}
+                            </span>
+                            <h2>{d.title}</h2>
+                            <span className="caption">
+                              {
+                                c.insects.filter((i) => i.drawerId === d.id)
+                                  .length
+                              }{" "}
+                              specimens · {d.slotCount} spaces
+                            </span>
+                          </div>
+                          {!readOnly && (
+                            <button
+                              className="icon-button"
+                              aria-label={`Edit ${d.title}`}
+                              onClick={() => setDrawerSettings({ ...d })}
+                            >
+                              <Settings2 size={18} />
+                            </button>
+                          )}
+                        </header>
+                        <div className="specimen-grid">
+                          {hasFilter
+                            ? records
+                                .sort((a, b) => a.slotIndex - b.slotIndex)
+                                .map(renderCard)
+                            : Array.from({ length: d.slotCount }, (_, n) =>
+                                slots.has(n) ? (
+                                  renderCard(slots.get(n)!)
+                                ) : (
+                                  <button
+                                    className="empty-slot"
+                                    key={`${d.id}-${n}`}
+                                    disabled={readOnly}
+                                    onClick={() => addSpecimen(d.id, n)}
+                                    aria-label={`Add specimen to ${d.title}, space ${n + 1}`}
+                                  >
+                                    <span className="record-number">
+                                      {String(n + 1).padStart(2, "0")}
+                                    </span>
+                                    <Plus size={25} strokeWidth={1.3} />
+                                    <span>
+                                      {readOnly
+                                        ? "Empty space"
+                                        : "Add specimen"}
+                                    </span>
+                                  </button>
+                                ),
+                              )}
+                        </div>
+                      </section>
+                    );
+                  })}
+                  {hasFilter && !filtered.length && (
+                    <div className="empty-results">
+                      <Search size={28} />
+                      <h3>No specimens match these filters</h3>
+                      <p>Try another name, locality or insect order.</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="records-table-wrap">
+                  <table className="records-table">
+                    <thead>
+                      <tr>
+                        <th>Specimen</th>
+                        <th>Order / family</th>
+                        <th>Locality & date</th>
+                        <th>Confidence</th>
+                        <th>Record checks</th>
+                        <th>
+                          <span className="visually-hidden">Open</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map((i) => (
+                        <tr key={i.id}>
+                          <td>
+                            <div className="table-specimen">
+                              {i.imageUrl && <img src={i.imageUrl} alt="" />}
+                              <div>
+                                <strong className={i.genus ? "scientific" : ""}>
+                                  {specimenName(i)}
+                                </strong>
+                                <span>
+                                  {i.commonName ||
+                                    c.drawers.find((d) => d.id === i.drawerId)
+                                      ?.title}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            {i.order || "—"}
+                            <small>{i.family || "—"}</small>
+                          </td>
+                          <td>
+                            {i.location || "Not recorded"}
+                            <small>{formatDate(i.dateCaught)}</small>
+                          </td>
+                          <td>
+                            {i.identificationConfidence || "Not recorded"}
+                          </td>
+                          <td>
+                            <span
+                              className={`status-badge ${isReady(i) ? "complete" : ""}`}
+                            >
+                              {checks(i).filter((x) => x.ok).length} / 6
+                            </span>
+                          </td>
+                          <td>
+                            <button
+                              className="button compact"
+                              onClick={() =>
+                                setEditing({
+                                  drawerId: i.drawerId,
+                                  slotIndex: i.slotIndex,
+                                  insect: i,
+                                })
+                              }
+                            >
+                              {readOnly ? "View" : "Open"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!filtered.length && (
+                    <div className="empty-results">
+                      <Archive size={28} />
+                      <h3>
+                        {c.insects.length
+                          ? "No matching records"
+                          : "Your records will appear here"}
+                      </h3>
+                      <p>
+                        {c.insects.length
+                          ? "Adjust your filters to see more specimens."
+                          : "Add a specimen to begin your collection."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+          <footer className="workspace-footer">
+            <span>Virtual Entobox · Entomology at Harper Adams</span>
+            <span>
+              Saved in this browser · Export JSON to back up or submit
+            </span>
+          </footer>
+        </main>
+      </div>
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".json,application/json"
+        className="visually-hidden"
+        aria-label="Open Entobox collection file"
+        onChange={(e) => importFile(e.target.files?.[0])}
+      />
+      {editing && (
         <Editor
-          drawerId={editingSlot.drawerId}
-          slotIndex={editingSlot.index}
-          initialData={getInsectAtSlot(editingSlot.drawerId, editingSlot.index)}
-          onSave={handleSaveInsect}
-          onClose={() => setEditingSlot(null)}
-          onDelete={handleDeleteInsect}
-          readOnly={isAdmin}
-          defaultCollector={isAdmin ? '' : currentUser.fullName}
+          key={editing.insect?.id || `${editing.drawerId}-${editing.slotIndex}`}
+          collection={c}
+          {...editing}
+          initialData={editing.insect}
+          onSave={saveSpecimen}
+          onClose={() => setEditing(null)}
+          onDelete={(id) => {
+            change((d) => ({
+              ...d,
+              insects: d.insects.filter((i) => i.id !== id),
+            }));
+            setEditing(null);
+          }}
+          readOnly={readOnly}
         />
       )}
+      {settings && (
+        <Dialog title="Collection details" onClose={() => setSettings(false)}>
+          <form
+            className="dialog-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              change((d) => ({
+                ...d,
+                ...profile,
+                title: profile.title.trim() || "My insect collection",
+              }));
+              setSettings(false);
+            }}
+          >
+            <label className="field">
+              <span>Collection title</span>
+              <input
+                required
+                autoFocus
+                value={profile.title}
+                onChange={(e) =>
+                  setProfile({ ...profile, title: e.target.value })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Your name</span>
+              <input
+                value={profile.studentName}
+                onChange={(e) =>
+                  setProfile({ ...profile, studentName: e.target.value })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Student number</span>
+              <input
+                value={profile.studentId}
+                onChange={(e) =>
+                  setProfile({ ...profile, studentId: e.target.value })
+                }
+              />
+            </label>
+            <p className="caption">
+              These details appear in your exported collection. No account or
+              password is needed.
+            </p>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button"
+                onClick={() => setSettings(false)}
+              >
+                Cancel
+              </button>
+              <button className="button primary">Save details</button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+      {drawerSettings && (
+        <Dialog title="Drawer settings" onClose={() => setDrawerSettings(null)}>
+          <form
+            className="dialog-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              renameDrawer();
+            }}
+          >
+            <label className="field">
+              <span>Drawer name</span>
+              <input
+                autoFocus
+                value={drawerSettings.title}
+                onChange={(e) =>
+                  setDrawerSettings({
+                    ...drawerSettings,
+                    title: e.target.value,
+                  })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Number of spaces</span>
+              <input
+                type="number"
+                min="1"
+                max="1000"
+                value={drawerSettings.slotCount}
+                onChange={(e) =>
+                  setDrawerSettings({
+                    ...drawerSettings,
+                    slotCount: Number(e.target.value),
+                  })
+                }
+              />
+              <small>Occupied spaces are always retained.</small>
+            </label>
+            <div className="dialog-actions">
+              {c.drawers.length > 1 && (
+                <button
+                  type="button"
+                  className="button danger"
+                  onClick={deleteDrawer}
+                >
+                  <Trash2 size={16} /> Delete drawer
+                </button>
+              )}
+              <button className="button primary">Save drawer</button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+      {library && (
+        <Dialog title="Your collections" onClose={() => setLibrary(null)}>
+          <div className="dialog-body">
+            <p className="muted">
+              Collections on this device. Open a JSON file to continue work from
+              another browser or computer.
+            </p>
+            <div className="collection-list">
+              {library.map((x) => (
+                <button
+                  key={x.collectionId}
+                  onClick={() => {
+                    setData(x);
+                    setReview(null);
+                    setLibrary(null);
+                    clearFilters();
+                    setView("drawer");
+                  }}
+                >
+                  <Archive size={24} />
+                  <div>
+                    <strong>{x.title}</strong>
+                    <span>
+                      {x.studentName || "No student details"} ·{" "}
+                      {x.insects.length} specimens
+                    </span>
+                  </div>
+                  {x.collectionId === data.collectionId && (
+                    <span className="tag">Open</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="dialog-actions">
+              <button className="button" onClick={() => chooseFile("edit")}>
+                <Upload size={17} /> Open JSON file
+              </button>
+              <button className="button primary" onClick={newCollection}>
+                <Plus size={17} /> New collection
+              </button>
+            </div>
+            <p className="caption">
+              Opening a file creates a separate copy. Work is saved in this
+              browser and is not sent to your lecturer automatically. Anyone
+              using this browser profile can open its collections.
+            </p>
+          </div>
+        </Dialog>
+      )}
+      {notice && (
+        <div className="toast" role="status">
+          <span>{notice}</span>
+          <button
+            aria-label="Dismiss notification"
+            onClick={() => setNotice("")}
+          >
+            <X size={17} />
+          </button>
+        </div>
+      )}
+      <PrintCollection collection={c} />
+    </>
+  );
+}
+function Guide({ onAdd, readOnly }: { onAdd: () => void; readOnly: boolean }) {
+  return (
+    <article className="practical-guide">
+      <div className="guide-heading">
+        <span className="eyebrow">PRACTICAL GUIDE</span>
+        <h2>From observation to collection.</h2>
+        <p>
+          A photographic alternative to a specimen collection assignment,
+          practising identification, labelling and curation.
+        </p>
+      </div>
+      <div className="guide-steps">
+        {[
+          [
+            "01",
+            "Photograph",
+            "Use your own observations, suitable teaching images or existing reference material. Take several views while avoiding unnecessary disturbance. Record the image source.",
+          ],
+          [
+            "02",
+            "Prepare",
+            "Add a clear photograph. Use Prepare image to frame, rotate or remove the background if useful. Keep identifying features intact; your original is retained. Add a virtual pin if required by your brief.",
+          ],
+          [
+            "03",
+            "Identify",
+            "Work through an appropriate key. Record the features you used, the reference and your confidence. Stop at order, family or genus if the evidence cannot support a species identification.",
+          ],
+          [
+            "04",
+            "Document",
+            "Record the date, locality, observer, habitat and source. Add supporting views and explain handling, provenance and any uncertainty. Save drafts as you work.",
+          ],
+          [
+            "05",
+            "Curate & submit",
+            "Organise specimens into named drawers. Check missing details in Records. Export the collection JSON, which includes photographs, and submit it through your VLE. Keep a separate backup.",
+          ],
+        ].map(([n, title, body]) => (
+          <section key={n}>
+            <span>{n}</span>
+            <div>
+              <h3>{title}</h3>
+              <p>{body}</p>
+            </div>
+          </section>
+        ))}
+      </div>
+      <div className="guide-notes">
+        <section>
+          <Leaf size={23} />
+          <h3>Observe with care</h3>
+          <p>
+            This exercise does not require insects to be killed. Prefer
+            observation in place, minimal handling and release where
+            appropriate, specimens found dead, or existing images with suitable
+            permission. Follow your course fieldwork guidance and site access
+            requirements.
+          </p>
+        </section>
+        <section>
+          <BookOpen size={23} />
+          <h3>Know the limits of a photograph</h3>
+          <p>
+            Some identifications require characters that photographs cannot
+            show. A digital collection practises evidence and curation; it does
+            not reproduce all the microscopy, specimen preparation or diagnostic
+            skills developed with physical material.
+          </p>
+        </section>
+      </div>
+      <section className="guide-export">
+        <h3>Which export should I use?</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Format</th>
+              <th>Use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Collection JSON</td>
+              <td>
+                Backup, continuing on another device, and submission. Includes
+                all photographs and can be reopened in Entobox.
+              </td>
+            </tr>
+            <tr>
+              <td>CSV table</td>
+              <td>
+                Metadata for a spreadsheet. Does not contain photographs and
+                cannot restore the collection.
+              </td>
+            </tr>
+            <tr>
+              <td>Print / PDF</td>
+              <td>
+                A readable collection portfolio. Use your browser’s Save as PDF
+                option; this is not an editable backup.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Your assignment brief determines required taxa, specimen numbers,
+          pinning conventions and marking criteria. Entobox checks for missing
+          information, not scientific accuracy.
+        </p>
+      </section>
+      <section className="staff-guide">
+        <h3>For staff: review a submission</h3>
+        <p>
+          Select <strong>Review a submission</strong> and open the student’s
+          JSON file. You can inspect photographs, labels, identification
+          evidence and notes in read-only mode. Returning to your collection
+          leaves your own work unchanged.
+        </p>
+      </section>
+      {!readOnly && (
+        <button className="button primary" onClick={onAdd}>
+          <Plus size={17} /> Add a specimen
+        </button>
+      )}
+    </article>
+  );
+}
+function PrintCollection({ collection: c }: { collection: CollectionData }) {
+  return (
+    <div className="print-collection">
+      <header>
+        <h1>{c.title}</h1>
+        <p>
+          {c.studentName} {c.studentId && `· ${c.studentId}`}
+        </p>
+        <p>
+          Virtual Entobox · Harper Adams University · {c.insects.length}{" "}
+          specimens
+        </p>
+      </header>
+      {c.drawers.map((d) => (
+        <section key={d.id}>
+          <h2>{d.title}</h2>
+          {c.insects
+            .filter((i) => i.drawerId === d.id)
+            .sort((a, b) => a.slotIndex - b.slotIndex)
+            .map((i) => (
+              <article key={i.id}>
+                <div className="print-specimen">
+                  <div className="print-photo">
+                    {i.imageUrl && (
+                      <img src={i.imageUrl} alt={specimenName(i)} />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className={i.genus ? "scientific" : ""}>
+                      {specimenName(i)}
+                    </h3>
+                    <p>{i.commonName}</p>
+                    <p>
+                      {[i.phylum, i.class, i.order, i.suborder, i.family]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p>
+                      {formatDate(i.dateCaught)} ·{" "}
+                      {i.location || "Locality not recorded"}
+                      <br />
+                      {i.gridReference}
+                      <br />
+                      Observer: {i.collector || "Not recorded"}
+                    </p>
+                    <p>
+                      {[i.habitat, i.microhabitat, i.lifeStage, i.sex]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p>
+                      Identified by: {i.identifier || "Not recorded"} ·
+                      Confidence: {i.identificationConfidence || "Not recorded"}
+                    </p>
+                  </div>
+                </div>
+                <dl>
+                  {[
+                    ["Identification evidence", i.identificationNotes],
+                    ["Key / reference", i.identificationReference],
+                    ["Source", i.captureMethod],
+                    ["Handling / provenance", i.ethicalNotes],
+                    ["Image credit", i.imageCredit],
+                    ["Source URL", i.sourceUrl],
+                    ["Mounting rationale", i.pinningNotes],
+                    ["Ecology and evolutionary context", i.evolutionaryHistory],
+                  ]
+                    .filter(([, v]) => v)
+                    .map(([k, v]) => (
+                      <React.Fragment key={k}>
+                        <dt>{k}</dt>
+                        <dd>{v}</dd>
+                      </React.Fragment>
+                    ))}
+                </dl>
+                {i.fieldPhotos.length > 0 && (
+                  <div className="print-supporting">
+                    {i.fieldPhotos.map((src, n) => (
+                      <img key={n} src={src} alt={`Supporting view ${n + 1}`} />
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+        </section>
+      ))}
     </div>
   );
 }

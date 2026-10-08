@@ -9,43 +9,55 @@ const DEFAULT_QUALITY = 0.88;
 
 export const resizeImageFile = (
   file: File,
-  options: ResizeOptions = {}
+  options: ResizeOptions = {},
 ): Promise<string> => {
   const maxDimension = options.maxDimension ?? DEFAULT_MAX_DIMENSION;
   const quality = options.quality ?? DEFAULT_QUALITY;
   const preservePng = options.preservePng ?? true;
 
   return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) {
-      reject(new Error('Selected file is not an image.'));
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.type)) {
+      reject(
+        new Error(
+          "Choose a JPEG, PNG, WebP or GIF photograph. Convert HEIC images to JPEG first.",
+        ),
+      );
       return;
     }
 
+    if (file.size > 25 * 1024 * 1024) {
+      reject(new Error("Please choose an image smaller than 25 MB."));
+      return;
+    }
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Could not read the selected image.'));
+    reader.onerror = () =>
+      reject(new Error("Could not read the selected image."));
     reader.onload = () => {
       const img = new Image();
-      img.onerror = () => reject(new Error('Could not decode the selected image.'));
+      img.onerror = () =>
+        reject(new Error("Could not decode the selected image."));
       img.onload = () => {
         const largestSide = Math.max(img.naturalWidth, img.naturalHeight);
-        const scale = largestSide > maxDimension ? maxDimension / largestSide : 1;
+        const scale =
+          largestSide > maxDimension ? maxDimension / largestSide : 1;
         const width = Math.max(1, Math.round(img.naturalWidth * scale));
         const height = Math.max(1, Math.round(img.naturalHeight * scale));
 
-        const canvas = document.createElement('canvas');
+        const canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext("2d");
         if (!ctx) {
-          reject(new Error('Canvas is unavailable in this browser.'));
+          reject(new Error("Canvas is unavailable in this browser."));
           return;
         }
 
         ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, 0, 0, width, height);
 
-        const outputType = preservePng && file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const outputType =
+          preservePng && file.type === "image/png" ? "image/png" : "image/jpeg";
         resolve(canvas.toDataURL(outputType, quality));
       };
       img.src = String(reader.result);

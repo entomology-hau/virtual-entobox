@@ -1,27 +1,63 @@
-import React, { useMemo, useState } from 'react';
-import { EthicalCaptureMethod, IdentificationConfidence, Insect, PinPosition } from '../types';
-import { PinningCanvas } from './PinningCanvas';
-import { ImageEditor } from './ImageEditor';
-import { resizeImageFile } from '../services/imageUtils';
+import React, { useRef, useState } from "react";
 import {
-  AlertTriangle,
-  ArrowRight,
   Camera,
-  CheckCircle2,
-  ClipboardCheck,
-  Edit2,
-  Eye,
-  Image as ImageIcon,
-  Info,
+  Check,
+  Circle,
+  FileImage,
+  ImagePlus,
   Leaf,
+  Maximize2,
+  Pin,
   RotateCcw,
   Save,
   Trash2,
-  Upload,
-  X
-} from 'lucide-react';
-
-interface EditorProps {
+  X,
+} from "lucide-react";
+import { CollectionData, Insect } from "../types";
+import { blankSpecimen, checks, specimenName } from "../services/collection";
+import { resizeImageFile } from "../services/imageUtils";
+import { Dialog } from "./Dialog";
+import { ImageEditor } from "./ImageEditor";
+import { PinningCanvas } from "./PinningCanvas";
+const orders = [
+  "Coleoptera",
+  "Diptera",
+  "Hemiptera",
+  "Hymenoptera",
+  "Lepidoptera",
+  "Orthoptera",
+  "Odonata",
+  "Dermaptera",
+  "Blattodea",
+  "Mantodea",
+  "Phasmatodea",
+  "Neuroptera",
+  "Mecoptera",
+  "Trichoptera",
+  "Ephemeroptera",
+  "Plecoptera",
+  "Psocodea",
+  "Siphonaptera",
+  "Thysanoptera",
+  "Zygentoma",
+  "Archaeognatha",
+  "Raphidioptera",
+  "Megaloptera",
+  "Strepsiptera",
+  "Embioptera",
+  "Grylloblattodea",
+  "Mantophasmatodea",
+  "Zoraptera",
+];
+const methods = [
+  "Field observation / live release",
+  "Found dead specimen",
+  "Existing teaching image",
+  "Museum or reference collection",
+  "Other non-lethal source",
+];
+interface Props {
+  collection: CollectionData;
   drawerId: string;
   slotIndex: number;
   initialData: Insect | null;
@@ -29,634 +65,671 @@ interface EditorProps {
   onClose: () => void;
   onDelete: (id: string) => void;
   readOnly?: boolean;
-  defaultCollector?: string;
 }
-
-const captureMethods: EthicalCaptureMethod[] = [
-  '',
-  'Field observation / live release',
-  'Found dead specimen',
-  'Existing teaching image',
-  'Museum or reference collection',
-  'Other non-lethal source'
-];
-
-const confidenceOptions: IdentificationConfidence[] = ['', 'High', 'Medium', 'Low'];
-
-export const Editor: React.FC<EditorProps> = ({ drawerId, slotIndex, initialData, onSave, onClose, onDelete, readOnly = false, defaultCollector = '' }) => {
-  const [step, setStep] = useState(initialData ? 2 : 0);
-
-  // Image State
-  const [imageUrl, setImageUrl] = useState<string | null>(initialData?.imageUrl || null);
-  const [originalImageUrl, setOriginalImageUrl] = useState<string | null>(initialData?.imageUrl || null);
-  const [showImageEditor, setShowImageEditor] = useState(false);
-  const [tempImageSrc, setTempImageSrc] = useState<string | null>(null);
-  const [imageError, setImageError] = useState('');
-
-  // Pinning
-  const [pinPosition, setPinPosition] = useState<PinPosition | null>(initialData?.pinPosition || null);
-
-  // Taxonomy State
-  const [phylum, setPhylum] = useState(initialData?.phylum || 'Arthropoda');
-  const [classVal, setClassVal] = useState(initialData?.class || 'Insecta');
-  const [order, setOrder] = useState(initialData?.order || '');
-  const [suborder, setSuborder] = useState(initialData?.suborder || '');
-  const [family, setFamily] = useState(initialData?.family || '');
-  const [genus, setGenus] = useState(initialData?.genus || '');
-  const [species, setSpecies] = useState(initialData?.species || '');
-  const [authority, setAuthority] = useState(initialData?.authority || '');
-  const [commonName, setCommonName] = useState(initialData?.commonName || '');
-  const [identifier, setIdentifier] = useState(initialData?.identifier || '');
-  const [identificationConfidence, setIdentificationConfidence] = useState<IdentificationConfidence>(initialData?.identificationConfidence || '');
-
-  // Collection Data
-  const [dateCaught, setDateCaught] = useState(initialData?.dateCaught || new Date().toISOString().split('T')[0]);
-  const [location, setLocation] = useState(initialData?.location || '');
-  const [collector, setCollector] = useState(initialData?.collector || defaultCollector || '');
-  const [habitat, setHabitat] = useState(initialData?.habitat || '');
-  const [microhabitat, setMicrohabitat] = useState(initialData?.microhabitat || '');
-  const [lifeStage, setLifeStage] = useState(initialData?.lifeStage || '');
-  const [sex, setSex] = useState(initialData?.sex || '');
-  const [captureMethod, setCaptureMethod] = useState<EthicalCaptureMethod>(initialData?.captureMethod || '');
-  const [ethicalNotes, setEthicalNotes] = useState(initialData?.ethicalNotes || '');
-  const [pinningNotes, setPinningNotes] = useState(initialData?.pinningNotes || '');
-  const [evolutionaryHistory, setEvolutionaryHistory] = useState(initialData?.evolutionaryHistory || '');
-  const [fieldPhotos, setFieldPhotos] = useState<string[]>(initialData?.fieldPhotos || []);
-  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
-
-  const validationChecks = useMemo(() => [
-    { label: 'Processed specimen image', ok: Boolean(imageUrl) },
-    { label: 'Pin placed on thorax/notum', ok: Boolean(pinPosition) },
-    { label: 'Ethical source and handling note', ok: Boolean(captureMethod) && ethicalNotes.trim().length >= 10 },
-    { label: 'Minimum taxonomic placement', ok: Boolean(order.trim()) || Boolean(family.trim()) },
-    { label: 'Collection date, location, and collector', ok: Boolean(dateCaught) && Boolean(location.trim()) && Boolean(collector.trim()) }
-  ], [captureMethod, collector, dateCaught, ethicalNotes, family, imageUrl, location, order, pinPosition]);
-
-  const completionPercent = Math.round((validationChecks.filter(check => check.ok).length / validationChecks.length) * 100);
-  const missingRecommended = validationChecks.filter(check => !check.ok).map(check => check.label);
-
-  const inputClass = `w-full p-2.5 border border-neutral-300 dark:border-neutral-700 rounded-lg text-sm text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-900 outline-none placeholder-neutral-400 dark:placeholder-neutral-500 font-medium transition ${readOnly ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 cursor-not-allowed' : 'focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500'}`;
-  const selectClass = `${inputClass} appearance-none`;
-  const labelClass = 'block text-[10px] font-bold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide mb-1';
-  const cardClass = 'bg-white dark:bg-neutral-800 p-6 rounded-xl shadow-sm border border-neutral-200 dark:border-neutral-700 relative transition-colors duration-300';
-
-  const buildInsectData = (): Insect => ({
-    id: initialData?.id || crypto.randomUUID(),
-    drawerId,
-    slotIndex,
-    imageUrl,
-    pinPosition,
-    phylum,
-    class: classVal,
-    order,
-    suborder,
-    family,
-    genus,
-    species,
-    authority,
-    commonName,
-    dateCaught,
-    location,
-    collector,
-    habitat,
-    microhabitat,
-    lifeStage,
-    sex,
-    identifier,
-    identificationConfidence,
-    captureMethod,
-    ethicalNotes,
-    pinningNotes,
-    evolutionaryHistory,
-    fieldPhotos
-  });
-
-  const handleMainImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (readOnly) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
+export function Editor({
+  collection,
+  drawerId,
+  slotIndex,
+  initialData,
+  onSave,
+  onClose,
+  onDelete,
+  readOnly = false,
+}: Props) {
+  const [draft, setDraft] = useState<Insect>(() =>
+    initialData
+      ? { ...initialData }
+      : blankSpecimen(drawerId, slotIndex, collection.studentName),
+  );
+  const [tab, setTab] = useState("photograph");
+  const [dirty, setDirty] = useState(false);
+  const [studio, setStudio] = useState(false);
+  const [pinMode, setPinMode] = useState(false);
+  const [zoom, setZoom] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const mainInput = useRef<HTMLInputElement>(null),
+    fieldInput = useRef<HTMLInputElement>(null);
+  const update = (key: keyof Insect, value: any) => {
+    setDraft((d) => ({ ...d, [key]: value }));
+    setDirty(true);
+  };
+  const close = () => {
+    if (
+      readOnly ||
+      !dirty ||
+      confirm("Discard the unsaved changes to this specimen?")
+    )
+      onClose();
+  };
+  const field = (
+    key: keyof Insect,
+    label: string,
+    opts: {
+      type?: string;
+      placeholder?: string;
+      wide?: boolean;
+      area?: boolean;
+      hint?: string;
+    } = {},
+  ) => (
+    <label className={`field ${opts.wide ? "span-2" : ""}`} key={key}>
+      <span>{label}</span>
+      {opts.area ? (
+        <textarea
+          aria-label={label}
+          disabled={readOnly}
+          rows={4}
+          value={String(draft[key] || "")}
+          onChange={(e) => update(key, e.target.value)}
+          placeholder={opts.placeholder}
+        />
+      ) : (
+        <input
+          aria-label={label}
+          disabled={readOnly}
+          type={opts.type || "text"}
+          value={String(draft[key] || "")}
+          onChange={(e) => update(key, e.target.value)}
+          placeholder={opts.placeholder}
+          list={key === "order" ? "insect-orders" : undefined}
+          max={
+            opts.type === "date"
+              ? new Date().toLocaleDateString("en-CA")
+              : undefined
+          }
+        />
+      )}{" "}
+      {opts.hint && <small>{opts.hint}</small>}
+    </label>
+  );
+  const select = (key: keyof Insect, label: string, options: string[]) => (
+    <label className="field">
+      <span>{label}</span>
+      <select
+        aria-label={label}
+        disabled={readOnly}
+        value={String(draft[key] || "")}
+        onChange={(e) => update(key, e.target.value)}
+      >
+        <option value="">Not recorded</option>
+        {[
+          ...new Set([
+            ...options,
+            ...(draft[key] && !options.includes(String(draft[key]))
+              ? [String(draft[key])]
+              : []),
+          ]),
+        ].map((x) => (
+          <option key={x}>{x}</option>
+        ))}
+      </select>
+    </label>
+  );
+  const upload = async (files: FileList | null, context = false) => {
+    if (!files?.length) return;
+    setBusy(true);
+    setError("");
     try {
-      setImageError('');
-      const resizedImage = await resizeImageFile(file, { maxDimension: 1800, quality: 0.9, preservePng: true });
-      setTempImageSrc(resizedImage);
-      setOriginalImageUrl(resizedImage);
-      setShowImageEditor(true);
-    } catch (err) {
-      setImageError(err instanceof Error ? err.message : 'Could not process the selected image.');
+      if (context) {
+        if (draft.fieldPhotos.length + files.length > 6)
+          throw new Error("Keep up to six supporting photographs per record.");
+        const result = await Promise.all(
+          Array.from(files).map((f) =>
+            resizeImageFile(f, {
+              maxDimension: 1400,
+              quality: 0.86,
+              preservePng: false,
+            }),
+          ),
+        );
+        update("fieldPhotos", [...draft.fieldPhotos, ...result]);
+      } else {
+        const src = await resizeImageFile(files[0], {
+          maxDimension: 1800,
+          quality: 0.9,
+          preservePng: true,
+        });
+        setDraft((d) => ({
+          ...d,
+          imageUrl: src,
+          originalImageUrl: src,
+          pinPosition: null,
+        }));
+        setDirty(true);
+        setPinMode(false);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The image could not be read.");
     } finally {
-      e.target.value = '';
+      setBusy(false);
+      if (mainInput.current) mainInput.current.value = "";
+      if (fieldInput.current) fieldInput.current.value = "";
     }
   };
-
-  const handleEditorSave = (newUrl: string) => {
-    setImageUrl(newUrl);
-    if (newUrl !== imageUrl) {
-      setPinPosition(null);
-      setValidationWarnings(['Image changed; place the pin again so the position matches the edited specimen.']);
-    }
-    setShowImageEditor(false);
-    setTempImageSrc(null);
-  };
-
-  const handleRevertImage = () => {
-    if (!originalImageUrl) return;
-    if (confirm('Revert to the original uploaded image? The pin will be cleared because image geometry may change.')) {
-      setImageUrl(originalImageUrl);
-      setPinPosition(null);
-    }
-  };
-
-  const handleRemoveImage = () => {
-    setImageUrl(null);
-    setPinPosition(null);
-  };
-
-  const handleFieldPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (readOnly) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const resizedImage = await resizeImageFile(file, { maxDimension: 1000, quality: 0.84, preservePng: false });
-      setFieldPhotos(prev => [...prev, resizedImage]);
-    } catch (err) {
-      setValidationWarnings([err instanceof Error ? err.message : 'Could not process the field photograph.']);
-    } finally {
-      e.target.value = '';
-    }
-  };
-
-  const handleSave = () => {
-    if (readOnly) return;
-
-    if (!imageUrl) {
-      setValidationWarnings(['Upload and process a specimen image before saving.']);
-      setStep(0);
-      return;
-    }
-
-    if (!pinPosition) {
-      setValidationWarnings(['Place the virtual pin on the thorax/notum before saving.']);
-      setStep(1);
-      return;
-    }
-
-    if (missingRecommended.length > 0) {
-      setValidationWarnings(missingRecommended);
-      const proceed = confirm(`This entry is missing recommended teaching fields:\n\n• ${missingRecommended.join('\n• ')}\n\nSave anyway?`);
-      if (!proceed) return;
-    }
-
-    onSave(buildInsectData());
-  };
-
-  if (showImageEditor && tempImageSrc && !readOnly) {
-    return (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" role="dialog" aria-modal="true" aria-label="Specimen image studio">
-        <div className="w-full max-w-5xl h-[90vh]">
-          <ImageEditor
-            src={tempImageSrc}
-            onSave={handleEditorSave}
-            onCancel={() => {
-              setShowImageEditor(false);
-              setTempImageSrc(null);
-            }}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  const stepItems = [
-    { label: 'Image', description: 'Upload and clean' },
-    { label: 'Pin', description: 'Thorax placement' },
-    { label: 'Data', description: 'Ethics and label' }
-  ];
-
+  const checklist = checks(draft);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-neutral-900/60 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label={readOnly ? 'View specimen' : 'Edit specimen'}>
-      <div className="bg-white dark:bg-neutral-900 w-full max-w-6xl h-[95vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden ring-1 ring-neutral-200 dark:ring-neutral-800 transition-colors duration-300">
-        <div className={`border-b p-5 flex flex-col gap-4 md:flex-row md:justify-between md:items-center shrink-0 ${readOnly ? 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900' : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800'}`}>
-          <div>
-            <h2 className={`text-xl font-sans font-bold flex items-center gap-2 ${readOnly ? 'text-amber-700 dark:text-amber-500' : 'text-neutral-800 dark:text-neutral-100'}`}>
-              {readOnly ? <><Eye size={20} /> Viewing Specimen</> : (initialData ? 'Edit Specimen' : 'New Specimen Entry')}
-            </h2>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 font-mono uppercase mt-1">Slot {String(slotIndex + 1).padStart(2, '0')} • {readOnly ? 'Read Only Mode' : `${completionPercent}% teaching record complete`}</p>
-          </div>
-
-          {!readOnly && (
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
-              {stepItems.map((item, index) => (
-                <button
-                  key={item.label}
-                  onClick={() => setStep(index)}
-                  className={`px-3 py-2 rounded-xl border text-left min-w-[120px] transition ${step === index ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300' : 'bg-neutral-50 dark:bg-neutral-800 border-neutral-200 dark:border-neutral-700 text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-200'}`}
-                >
-                  <span className="block text-[10px] uppercase font-bold tracking-wider">Step {index + 1}</span>
-                  <span className="block text-sm font-bold">{item.label}</span>
-                  <span className="block text-[10px]">{item.description}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          <button onClick={onClose} className="absolute top-4 right-4 md:static hover:bg-neutral-100 dark:hover:bg-neutral-800 p-2 rounded-full transition text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100" aria-label="Close specimen editor">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="h-1 bg-neutral-100 dark:bg-neutral-800 shrink-0">
-          <div className={`${readOnly ? 'bg-amber-500' : 'bg-indigo-600'} h-full transition-all duration-300`} style={{ width: `${readOnly ? 100 : completionPercent}%` }} />
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-neutral-50 dark:bg-black/20">
-          {validationWarnings.length > 0 && !readOnly && (
-            <div className="mb-5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-800 dark:text-amber-200 flex gap-3">
-              <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold mb-1">Record needs attention</p>
-                <ul className="list-disc pl-5 space-y-0.5">
-                  {validationWarnings.map((warning) => <li key={warning}>{warning}</li>)}
-                </ul>
+    <Dialog
+      title={
+        readOnly
+          ? "Review specimen"
+          : initialData
+            ? "Edit specimen"
+            : "Add specimen"
+      }
+      onClose={close}
+      wide
+    >
+      {studio ? (
+        <ImageEditor
+          src={draft.imageUrl!}
+          onCancel={() => setStudio(false)}
+          onSave={(src) => {
+            setDraft((d) => ({ ...d, imageUrl: src, pinPosition: null }));
+            setDirty(true);
+            setStudio(false);
+            setPinMode(false);
+          }}
+        />
+      ) : (
+        <>
+          <div className="editor-content">
+            <aside className="specimen-preview">
+              <div className="row-between">
+                <span className="eyebrow">
+                  SPECIMEN {String(slotIndex + 1).padStart(2, "0")}
+                </span>
+                <span className="tag">
+                  {
+                    collection.drawers.find((d) => d.id === draft.drawerId)
+                      ?.title
+                  }
+                </span>
               </div>
-            </div>
-          )}
-
-          {step === 0 && !readOnly && (
-            <div className="flex flex-col items-center justify-center min-h-full space-y-8 max-w-3xl mx-auto">
-              <div className="text-center space-y-2">
-                <h3 className="text-3xl font-serif text-neutral-800 dark:text-neutral-100">Specimen imagery</h3>
-                <p className="text-neutral-500 dark:text-neutral-400">Use an existing, non-lethal, or live-release image. The app resizes uploads to reduce browser storage failures.</p>
-              </div>
-
-              <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="md:col-span-2 bg-white dark:bg-neutral-800 p-6 rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-700 shadow-sm flex flex-col items-center justify-center min-h-[420px]">
-                  {!imageUrl ? (
-                    <label className="cursor-pointer flex flex-col items-center gap-4 text-neutral-400 dark:text-neutral-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition group w-full h-full justify-center">
-                      <div className="p-4 bg-neutral-50 dark:bg-neutral-700 rounded-full group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition">
-                        <ImageIcon size={48} />
-                      </div>
-                      <div className="text-center">
-                        <span className="font-bold text-lg block text-neutral-600 dark:text-neutral-300">Click to upload specimen</span>
-                        <span className="text-sm">JPG, PNG, or WEBP supported</span>
-                      </div>
-                      <input type="file" accept="image/*" onChange={handleMainImageUpload} className="hidden" />
-                    </label>
-                  ) : (
-                    <div className="relative w-full h-full min-h-[360px] flex items-center justify-center bg-neutral-100 dark:bg-neutral-900/50 rounded-xl overflow-hidden border border-neutral-200 dark:border-neutral-700 checkerboard-soft">
-                      <img src={imageUrl} alt="Uploaded specimen" className="max-w-full max-h-[360px] object-contain relative z-10 drop-shadow-lg" />
-
-                      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-wrap justify-center gap-2 z-20">
-                        <button
-                          onClick={() => {
-                            setTempImageSrc(imageUrl);
-                            setShowImageEditor(true);
-                          }}
-                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-full shadow-lg hover:bg-indigo-700 font-bold text-sm transition"
-                        >
-                          <Edit2 size={14} /> Open Studio
-                        </button>
-
-                        {originalImageUrl && originalImageUrl !== imageUrl && (
-                          <button
-                            onClick={handleRevertImage}
-                            className="flex items-center gap-2 px-4 py-2 bg-white text-neutral-700 border border-neutral-300 rounded-full shadow-lg hover:bg-neutral-50 font-bold text-sm transition"
-                          >
-                            <RotateCcw size={14} /> Revert
-                          </button>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={handleRemoveImage}
-                        className="absolute top-2 right-2 p-1 bg-white/80 dark:bg-black/50 rounded-full hover:bg-red-100 text-neutral-500 hover:text-red-600 transition z-20"
-                        aria-label="Remove specimen image"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  )}
-                  {imageError && <p className="mt-3 text-xs text-rose-600 dark:text-rose-400 font-medium">{imageError}</p>}
-                </div>
-
-                <aside className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900 rounded-2xl p-5 text-sm text-emerald-900 dark:text-emerald-100 flex flex-col gap-3">
-                  <div className="flex items-center gap-2 font-bold">
-                    <Leaf size={18} /> Ethical image use
-                  </div>
-                  <p>Prefer photographs of living insects that were released, images from approved teaching sets, or specimens found dead.</p>
-                  <p>Avoid encouraging collection of rare, protected, or habitat-sensitive species. Record uncertainty rather than forcing identification.</p>
-                </aside>
-              </div>
-
-              <div className="flex justify-center w-full pt-2">
-                <button
-                  onClick={() => setStep(1)}
-                  disabled={!imageUrl}
-                  className="bg-indigo-600 text-white px-8 py-3 rounded-xl shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition flex items-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Confirm image <ArrowRight size={18} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {step === 1 && !readOnly && (
-            <div className="flex flex-col items-center justify-center min-h-full space-y-6">
-              <div className="text-center max-w-2xl">
-                <h3 className="text-3xl font-serif text-neutral-800 dark:text-neutral-100">Digital pinning</h3>
-                <p className="text-neutral-500 dark:text-neutral-400">Place the virtual pin on the thorax or notum. This preserves the teaching point of specimen orientation without killing an insect.</p>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 w-full max-w-5xl items-start">
-                <div className="lg:col-span-2 bg-white dark:bg-neutral-800 p-8 rounded-2xl border border-neutral-200 dark:border-neutral-700 shadow-lg flex justify-center">
-                  {imageUrl && (
+              <div
+                className="specimen-stage"
+                onDragOver={(e) => {
+                  if (!readOnly) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!readOnly && !busy) upload(e.dataTransfer.files);
+                }}
+              >
+                {draft.imageUrl ? (
+                  <>
                     <PinningCanvas
-                      imageUrl={imageUrl}
-                      pinPosition={pinPosition}
-                      onPinPlace={(pos) => {
-                        setPinPosition(pos);
-                        setValidationWarnings([]);
-                      }}
-                      readOnly={false}
+                      key={draft.imageUrl}
+                      imageUrl={draft.imageUrl}
+                      pinPosition={draft.pinPosition}
+                      onPinPlace={(p) => update("pinPosition", p)}
+                      readOnly={readOnly || !pinMode}
                     />
-                  )}
-                </div>
-
-                <div className="bg-white dark:bg-neutral-800 rounded-2xl border border-neutral-200 dark:border-neutral-700 p-5 shadow-sm text-sm text-neutral-600 dark:text-neutral-300 space-y-4">
-                  <div className="flex items-center gap-2 font-bold text-neutral-800 dark:text-neutral-100">
-                    <ClipboardCheck size={18} /> Pinning guide
-                  </div>
-                  <div className="space-y-3">
-                    <p><strong>Target:</strong> thorax/notum, not head, abdomen, wings, or legs.</p>
-                    <p><strong>Reason:</strong> standardised placement teaches curation and avoids obscuring diagnostic features.</p>
-                    <p><strong>Exception:</strong> if an image angle makes this ambiguous, place the best approximation and explain it in the pinning note.</p>
-                  </div>
-                  <div className={`rounded-xl p-3 border ${pinPosition ? 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200' : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200'}`}>
-                    {pinPosition ? 'Pin placed. You can click again to refine the position.' : 'Pin not yet placed.'}
-                  </div>
-                </div>
+                    <button
+                      className="icon-button expand-photo"
+                      aria-label="Enlarge specimen photograph"
+                      onClick={() => setZoom(draft.imageUrl)}
+                    >
+                      <Maximize2 size={18} />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="upload-zone"
+                    disabled={readOnly || busy}
+                    onClick={() => mainInput.current?.click()}
+                  >
+                    <Camera size={38} strokeWidth={1.3} />
+                    <strong>
+                      {busy
+                        ? "Preparing photograph…"
+                        : "Add a specimen photograph"}
+                    </strong>
+                    <span>Choose an image or drop it here</span>
+                    <small>JPEG, PNG, WebP or GIF · up to 25 MB</small>
+                  </button>
+                )}
               </div>
-
-              <div className="flex gap-4 items-center mt-6">
-                <button onClick={() => setStep(0)} className="text-neutral-500 dark:text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100 text-sm font-medium">Change image</button>
-                <button
-                  onClick={() => setStep(2)}
-                  disabled={!pinPosition}
-                  className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl shadow hover:bg-indigo-700 transition flex items-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Next: ethics and label <ArrowRight size={18} />
-                </button>
+              <div className="paper-label">
+                <div className="label-rule" />
+                <strong className={draft.genus ? "scientific" : ""}>
+                  {specimenName(draft)}
+                </strong>
+                <span>
+                  {draft.commonName ||
+                    draft.order ||
+                    "Identification in progress"}
+                </span>
+                <span>{draft.location || "Locality not recorded"}</span>
+                <span>
+                  {draft.dateCaught || "Date not recorded"} ·{" "}
+                  {draft.collector || "Observer not recorded"}
+                </span>
               </div>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div className="flex flex-col gap-6 h-full">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                <div className="lg:col-span-4 flex flex-col gap-4">
-                  <div className="relative bg-white dark:bg-neutral-800 p-6 rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-sm flex flex-col items-center justify-center min-h-[320px]">
-                    {imageUrl ? (
-                      <>
-                        <PinningCanvas
-                          imageUrl={imageUrl}
-                          pinPosition={pinPosition}
-                          onPinPlace={(pos) => !readOnly && setPinPosition(pos)}
-                          readOnly={readOnly}
-                        />
-                        {!readOnly && (
+              {draft.imageUrl && !readOnly && (
+                <div className="image-actions">
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => mainInput.current?.click()}
+                  >
+                    <ImagePlus size={16} /> Replace
+                  </button>
+                  <button className="button" onClick={() => setStudio(true)}>
+                    <FileImage size={16} /> Prepare image
+                  </button>
+                </div>
+              )}
+              <input
+                ref={mainInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="visually-hidden"
+                aria-label="Upload specimen photograph"
+                onChange={(e) => upload(e.target.files)}
+              />
+              {busy && <p role="status">Preparing photograph…</p>}
+              {error && (
+                <p className="notice error" role="alert">
+                  {error}
+                </p>
+              )}
+            </aside>
+            <section className="specimen-fields">
+              <div
+                className="editor-tabs"
+                role="tablist"
+                aria-label="Specimen details"
+              >
+                {[
+                  ["photograph", "Photograph"],
+                  ["identification", "Identification"],
+                  ["field", "Field record"],
+                  ["evidence", "Evidence & notes"],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    id={`tab-${id}`}
+                    role="tab"
+                    aria-selected={tab === id}
+                    aria-controls="editor-panel"
+                    onClick={() => setTab(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div
+                className="editor-panel"
+                id="editor-panel"
+                role="tabpanel"
+                aria-labelledby={`tab-${tab}`}
+              >
+                {tab === "photograph" && (
+                  <>
+                    <label className="field">
+                      <span>Collection drawer</span>
+                      <select
+                        disabled={readOnly}
+                        aria-label="Collection drawer"
+                        value={draft.drawerId}
+                        onChange={(e) => update("drawerId", e.target.value)}
+                      >
+                        {collection.drawers.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <h3>A record of the insect you observed</h3>
+                    <p className="muted">
+                      Use a clear photograph that shows the features needed for
+                      identification. Background cleanup is optional.
+                    </p>
+                    <div className="field-grid">
+                      {select("captureMethod", "Source of specimen", methods)}
+                      {field("imageCredit", "Photographer / image credit")}
+                      {field("sourceUrl", "Image source or record URL", {
+                        type: "url",
+                        wide: true,
+                        placeholder: "https://…",
+                        hint: "For a borrowed image, include its source and check permission to reuse it.",
+                      })}
+                      {field("ethicalNotes", "Observation and handling notes", {
+                        area: true,
+                        wide: true,
+                        placeholder:
+                          "How was the insect observed or obtained? Was any handling necessary? For reference images, describe their provenance.",
+                      })}
+                    </div>
+                    <div className="pin-section">
+                      <div>
+                        <h4>
+                          <Pin size={17} /> Virtual pinning
+                        </h4>
+                        <p className="caption">
+                          Use this if your assignment includes mounting
+                          conventions. A photographic record can also be saved
+                          without a pin.
+                        </p>
+                      </div>
+                      {!readOnly && (
+                        <div className="button-row">
                           <button
-                            onClick={() => {
-                              setTempImageSrc(imageUrl);
-                              setShowImageEditor(true);
-                            }}
-                            className="absolute top-2 right-2 p-2 bg-white dark:bg-neutral-700 text-neutral-600 dark:text-neutral-200 rounded-lg shadow-md border border-neutral-200 dark:border-neutral-600 hover:bg-neutral-50 dark:hover:bg-neutral-600 hover:text-indigo-600 dark:hover:text-indigo-400 transition z-10"
-                            title="Edit image"
+                            className={`button ${pinMode ? "primary" : ""}`}
+                            disabled={!draft.imageUrl}
+                            aria-pressed={pinMode}
+                            onClick={() => setPinMode(!pinMode)}
                           >
-                            <Edit2 size={16} />
+                            {pinMode
+                              ? "Finish pin placement"
+                              : "Place / adjust pin"}
                           </button>
-                        )}
-                      </>
-                    ) : (
-                      <div className="text-sm text-neutral-400 text-center">No specimen image uploaded.</div>
+                          {draft.pinPosition && (
+                            <button
+                              className="button"
+                              onClick={() => {
+                                update("pinPosition", null);
+                                setPinMode(false);
+                              }}
+                            >
+                              Remove pin
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {pinMode && (
+                        <p className="notice">
+                          Click the photograph to place the virtual pin.
+                          Appropriate placement depends on the insect group; use
+                          your course guidance.
+                        </p>
+                      )}
+                      {field("pinningNotes", "Mounting rationale", {
+                        area: true,
+                        wide: true,
+                        placeholder:
+                          "If used, explain why this mounting position is appropriate.",
+                      })}
+                    </div>
+                    {draft.originalImageUrl && (
+                      <div className="button-row">
+                        <button
+                          className="button subtle"
+                          onClick={() => setZoom(draft.originalImageUrl!)}
+                        >
+                          <Maximize2 size={16} /> View original photograph
+                        </button>
+                        {!readOnly &&
+                          draft.imageUrl !== draft.originalImageUrl && (
+                            <button
+                              className="button subtle"
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    "Restore the original photograph? This clears the virtual pin.",
+                                  )
+                                ) {
+                                  setDraft((d) => ({
+                                    ...d,
+                                    imageUrl: d.originalImageUrl!,
+                                    pinPosition: null,
+                                  }));
+                                  setDirty(true);
+                                }
+                              }}
+                            >
+                              <RotateCcw size={16} /> Restore original
+                            </button>
+                          )}
+                      </div>
                     )}
-                  </div>
-
-                  <div className="bg-white dark:bg-neutral-800 p-4 rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-sm">
-                    <h4 className="text-sm font-bold text-neutral-700 dark:text-neutral-200 mb-3 flex items-center gap-2"><Camera size={15} /> Field/context photos</h4>
-                    <div className="grid grid-cols-3 gap-2">
-                      {fieldPhotos.map((photo, idx) => (
-                        <div key={`${photo.slice(0, 18)}-${idx}`} className="relative group">
-                          <img src={photo} alt={`Field context ${idx + 1}`} className="w-full aspect-square object-cover rounded border border-neutral-200 dark:border-neutral-600" />
+                  </>
+                )}
+                {tab === "identification" && (
+                  <>
+                    <h3>Identify as far as the evidence allows</h3>
+                    <p className="muted">
+                      Order or family may be the most defensible identification.
+                      Leave ranks blank when they cannot be resolved.
+                    </p>
+                    <datalist id="insect-orders">
+                      {orders.map((o) => (
+                        <option key={o} value={o} />
+                      ))}
+                    </datalist>
+                    <div className="field-grid">
+                      {field("phylum", "Phylum")}
+                      {field("class", "Class")}
+                      {field("order", "Order", {
+                        placeholder: "Select or type an order",
+                      })}
+                      {field("suborder", "Suborder")}
+                      {field("family", "Family")}
+                      {field("genus", "Genus")}
+                      {field("species", "Specific epithet", {
+                        placeholder: "e.g. septempunctata",
+                      })}
+                      {field("authority", "Taxonomic authority")}
+                      {field("commonName", "Common name", { wide: true })}
+                      {field("identifier", "Identified by")}
+                      {select("identificationConfidence", "Confidence", [
+                        "High",
+                        "Medium",
+                        "Low",
+                      ])}
+                    </div>
+                  </>
+                )}
+                {tab === "field" && (
+                  <>
+                    <h3>The collection label</h3>
+                    <p className="muted">
+                      Record when, where and by whom the insect was observed.
+                      For teaching or museum images, preserve the original label
+                      data where available.
+                    </p>
+                    <div className="field-grid">
+                      {field("dateCaught", "Observation / collection date", {
+                        type: "date",
+                      })}
+                      {field("collector", "Observer / original collector")}
+                      {field("location", "Locality", {
+                        wide: true,
+                        placeholder: "Site, town, county and country",
+                      })}
+                      {field("gridReference", "Grid reference / coordinates", {
+                        wide: true,
+                      })}
+                      {field("habitat", "Habitat")}
+                      {field("microhabitat", "Microhabitat / host plant")}
+                      {select("lifeStage", "Life stage", [
+                        "Adult",
+                        "Larva",
+                        "Nymph",
+                        "Pupa",
+                        "Egg",
+                        "Unknown",
+                      ])}
+                      {select("sex", "Sex / morph", [
+                        "Female",
+                        "Male",
+                        "Worker",
+                        "Queen",
+                        "Unknown",
+                      ])}
+                    </div>
+                    <h4>Supporting photographs</h4>
+                    <p className="caption">
+                      Add other views, diagnostic details or habitat context. Up
+                      to six photographs.
+                    </p>
+                    <div className="context-photos">
+                      {draft.fieldPhotos.map((src, n) => (
+                        <div key={n}>
+                          <button
+                            className="photo-thumb"
+                            onClick={() => setZoom(src)}
+                            aria-label={`Enlarge supporting photograph ${n + 1}`}
+                          >
+                            <img
+                              src={src}
+                              alt={`Supporting photograph ${n + 1}`}
+                            />
+                          </button>
                           {!readOnly && (
                             <button
-                              onClick={() => setFieldPhotos(prev => prev.filter((_, photoIndex) => photoIndex !== idx))}
-                              className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition"
-                              aria-label={`Remove field photo ${idx + 1}`}
+                              className="remove-photo"
+                              aria-label={`Remove supporting photograph ${n + 1}`}
+                              onClick={() =>
+                                update(
+                                  "fieldPhotos",
+                                  draft.fieldPhotos.filter((_, i) => i !== n),
+                                )
+                              }
                             >
-                              <X size={12} />
+                              <X size={15} />
                             </button>
                           )}
                         </div>
                       ))}
-                      {!readOnly && (
-                        <label className="cursor-pointer bg-neutral-50 dark:bg-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-600 text-neutral-400 dark:text-neutral-500 aspect-square rounded text-xs flex flex-col items-center justify-center transition border border-neutral-200 dark:border-neutral-600 border-dashed text-center">
-                          <Upload size={16} className="mb-1" />
-                          Add photo
-                          <input type="file" accept="image/*" onChange={handleFieldPhotoUpload} className="hidden" />
-                        </label>
+                    </div>
+                    {!readOnly && (
+                      <button
+                        className="button"
+                        disabled={busy || draft.fieldPhotos.length >= 6}
+                        onClick={() => fieldInput.current?.click()}
+                      >
+                        <ImagePlus size={17} /> Add supporting photos
+                      </button>
+                    )}
+                    <input
+                      className="visually-hidden"
+                      ref={fieldInput}
+                      type="file"
+                      multiple
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      aria-label="Upload supporting photographs"
+                      onChange={(e) => upload(e.target.files, true)}
+                    />
+                  </>
+                )}
+                {tab === "evidence" && (
+                  <>
+                    <h3>Show your identification reasoning</h3>
+                    <p className="muted">
+                      Describe the features visible in your photographs and
+                      explain how they support your identification.
+                    </p>
+                    <div className="field-grid">
+                      {field(
+                        "identificationNotes",
+                        "Diagnostic features and uncertainty",
+                        {
+                          area: true,
+                          wide: true,
+                          placeholder:
+                            "Which characters support the identification? What remains uncertain or would need closer examination?",
+                        },
+                      )}
+                      {field(
+                        "identificationReference",
+                        "Key, guide or reference used",
+                        {
+                          area: true,
+                          wide: true,
+                          placeholder:
+                            "Include title / author and relevant pages, key couplets or a link. Record any independent verification.",
+                        },
+                      )}
+                      {field(
+                        "evolutionaryHistory",
+                        "Ecology and evolutionary context",
+                        {
+                          area: true,
+                          wide: true,
+                          placeholder:
+                            "Add relevant ecological or evolutionary notes and cite sources, as required by your assignment.",
+                        },
                       )}
                     </div>
-                  </div>
-
-                  <div className="bg-white dark:bg-neutral-800 p-4 rounded-xl border border-neutral-200 dark:border-neutral-700 shadow-sm">
-                    <label className={labelClass}>Pinning note</label>
-                    <textarea
-                      value={pinningNotes}
-                      onChange={(e) => setPinningNotes(e.target.value)}
-                      className={`${inputClass} h-24 resize-none`}
-                      placeholder="Explain any ambiguity in thorax placement or image angle."
-                      disabled={readOnly}
-                    />
-                  </div>
-                </div>
-
-                <div className="lg:col-span-8 flex flex-col gap-4">
-                  <div className={cardClass}>
-                    <div className={`absolute top-0 left-0 w-1 h-full rounded-l-xl ${readOnly ? 'bg-amber-500' : 'bg-indigo-500'}`}></div>
-                    <h3 className="text-lg font-serif font-bold text-neutral-800 dark:text-neutral-100 mb-4 pb-2 border-b border-neutral-100 dark:border-neutral-700">Taxonomic breakdown</h3>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Phylum</label>
-                        <input type="text" value={phylum} onChange={(e) => setPhylum(e.target.value)} className={inputClass} placeholder="Arthropoda" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Class</label>
-                        <input type="text" value={classVal} onChange={(e) => setClassVal(e.target.value)} className={inputClass} placeholder="Insecta" disabled={readOnly} />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Order</label>
-                        <input type="text" value={order} onChange={(e) => setOrder(e.target.value)} className={`${inputClass} font-semibold`} placeholder="e.g. Lepidoptera" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Suborder</label>
-                        <input type="text" value={suborder} onChange={(e) => setSuborder(e.target.value)} className={inputClass} placeholder="Optional" disabled={readOnly} />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-4">
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Family</label>
-                        <input type="text" value={family} onChange={(e) => setFamily(e.target.value)} className={`${inputClass} font-semibold`} placeholder="e.g. Nymphalidae" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Common name</label>
-                        <input type="text" value={commonName} onChange={(e) => setCommonName(e.target.value)} className={inputClass} placeholder="Optional" disabled={readOnly} />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Genus</label>
-                        <input type="text" value={genus} onChange={(e) => setGenus(e.target.value)} className={`${inputClass} italic font-serif`} placeholder="Danaus" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Species</label>
-                        <input type="text" value={species} onChange={(e) => setSpecies(e.target.value)} className={`${inputClass} italic font-serif`} placeholder="plexippus" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Naming authority</label>
-                        <input type="text" value={authority} onChange={(e) => setAuthority(e.target.value)} className={inputClass} placeholder="(Linnaeus, 1758)" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-1">
-                        <label className={labelClass}>Identifier</label>
-                        <input type="text" value={identifier} onChange={(e) => setIdentifier(e.target.value)} className={inputClass} placeholder="Name/initials" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-1">
-                        <label className={labelClass}>Confidence</label>
-                        <select value={identificationConfidence} onChange={(e) => setIdentificationConfidence(e.target.value as IdentificationConfidence)} className={selectClass} disabled={readOnly}>
-                          {confidenceOptions.map(option => <option key={option} value={option}>{option || 'Select'}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className={cardClass}>
-                    <div className={`absolute top-0 left-0 w-1 h-full rounded-l-xl ${readOnly ? 'bg-amber-500' : 'bg-emerald-500'}`}></div>
-                    <h3 className="text-lg font-serif font-bold text-neutral-800 dark:text-neutral-100 mb-4 pb-2 border-b border-neutral-100 dark:border-neutral-700">Collection details</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Date observed</label>
-                        <input type="date" value={dateCaught} onChange={(e) => setDateCaught(e.target.value)} className={inputClass} disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-4">
-                        <label className={labelClass}>Location</label>
-                        <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className={inputClass} placeholder="Lat/long, site, city, or county" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Collector/observer</label>
-                        <input type="text" value={collector} onChange={(e) => setCollector(e.target.value)} className={inputClass} disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Habitat</label>
-                        <input type="text" value={habitat} onChange={(e) => setHabitat(e.target.value)} className={inputClass} placeholder="e.g. meadow, glasshouse" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className={labelClass}>Microhabitat/host</label>
-                        <input type="text" value={microhabitat} onChange={(e) => setMicrohabitat(e.target.value)} className={inputClass} placeholder="e.g. on nettle, under bark" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-3">
-                        <label className={labelClass}>Life stage</label>
-                        <input type="text" value={lifeStage} onChange={(e) => setLifeStage(e.target.value)} className={inputClass} placeholder="Adult, larva, nymph, pupa" disabled={readOnly} />
-                      </div>
-                      <div className="sm:col-span-3">
-                        <label className={labelClass}>Sex / morph</label>
-                        <input type="text" value={sex} onChange={(e) => setSex(e.target.value)} className={inputClass} placeholder="Female, male, unknown, worker" disabled={readOnly} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className={cardClass}>
-                    <div className={`absolute top-0 left-0 w-1 h-full rounded-l-xl ${readOnly ? 'bg-amber-500' : 'bg-teal-500'}`}></div>
-                    <h3 className="text-lg font-serif font-bold text-neutral-800 dark:text-neutral-100 mb-4 pb-2 border-b border-neutral-100 dark:border-neutral-700 flex items-center gap-2"><Leaf size={18} /> Ethical provenance</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
-                      <div className="sm:col-span-3">
-                        <label className={labelClass}>Source / method</label>
-                        <select value={captureMethod} onChange={(e) => setCaptureMethod(e.target.value as EthicalCaptureMethod)} className={selectClass} disabled={readOnly}>
-                          {captureMethods.map(method => <option key={method} value={method}>{method || 'Select source'}</option>)}
-                        </select>
-                      </div>
-                      <div className="sm:col-span-3 flex items-end">
-                        <div className="rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 p-3 text-xs text-neutral-500 dark:text-neutral-400 flex gap-2">
-                          <Info size={15} className="shrink-0" />
-                          <span>State whether the insect was released, found dead, or sourced from an approved image/reference collection.</span>
+                    <div className="record-checks">
+                      <h4>
+                        Record checks · {checklist.filter((c) => c.ok).length} /{" "}
+                        {checklist.length}
+                      </h4>
+                      <p className="caption">
+                        These check whether information is present. They do not
+                        verify identification, accuracy or assignment marks.
+                      </p>
+                      {checklist.map((c) => (
+                        <div
+                          key={c.label}
+                          className={c.ok ? "check complete" : "check"}
+                        >
+                          {c.ok ? <Check size={16} /> : <Circle size={15} />}
+                          <span>{c.label}</span>
                         </div>
-                      </div>
-                      <div className="sm:col-span-6">
-                        <label className={labelClass}>Ethical handling note</label>
-                        <textarea
-                          value={ethicalNotes}
-                          onChange={(e) => setEthicalNotes(e.target.value)}
-                          className={`${inputClass} h-24 resize-none`}
-                          placeholder="Example: Photographed in situ and released; no specimen collected."
-                          disabled={readOnly}
-                        />
-                      </div>
+                      ))}
                     </div>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
-
-              <div className={cardClass}>
-                <label className="block text-sm font-bold text-neutral-700 dark:text-neutral-200 mb-2 flex items-center gap-2">
-                  Evolutionary history, phylogeny, and natural history notes
-                </label>
-                <textarea
-                  value={evolutionaryHistory}
-                  onChange={(e) => setEvolutionaryHistory(e.target.value)}
-                  className={`${inputClass} h-32 resize-none leading-relaxed`}
-                  placeholder="Notes on phylogeny, adaptations, ecology, uncertainty, and diagnostic characters."
-                  disabled={readOnly}
-                />
-              </div>
+            </section>
+          </div>
+          <footer className="editor-footer">
+            <div>
+              {readOnly ? (
+                <span className="tag">Read-only review</span>
+              ) : (
+                <span className="caption">
+                  {checklist.filter((c) => c.ok).length} of {checklist.length}{" "}
+                  record checks · drafts can be saved
+                </span>
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="p-4 bg-white dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-800 flex flex-col md:flex-row gap-3 md:justify-between md:items-center shrink-0">
-          <div className="flex items-center gap-3">
-            {initialData && !readOnly && (
-              <button
-                onClick={() => onDelete(initialData.id)}
-                className="text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/20 px-4 py-2 rounded-lg transition flex items-center gap-2 text-sm font-medium"
-              >
-                <Trash2 size={16} /> Delete entry
+            <div className="button-row">
+              {initialData && !readOnly && (
+                <button
+                  className="button danger subtle"
+                  onClick={() => {
+                    if (
+                      confirm(
+                        "Delete this specimen and its photographs from this collection?",
+                      )
+                    )
+                      onDelete(initialData.id);
+                  }}
+                >
+                  <Trash2 size={16} /> Delete
+                </button>
+              )}
+              <button className="button" onClick={close}>
+                {readOnly ? "Close" : "Cancel"}
               </button>
-            )}
-            {!readOnly && (
-              <div className="hidden md:flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400">
-                {completionPercent === 100 ? <CheckCircle2 size={15} className="text-emerald-600" /> : <AlertTriangle size={15} className="text-amber-500" />}
-                {completionPercent}% complete
-              </div>
-            )}
+              {!readOnly && (
+                <button
+                  className="button primary"
+                  disabled={busy}
+                  onClick={() => {
+                    onSave(draft);
+                  }}
+                >
+                  <Save size={17} /> Save specimen
+                </button>
+              )}
+            </div>
+          </footer>
+        </>
+      )}
+      {zoom && (
+        <Dialog title="Photograph" onClose={() => setZoom(null)} wide>
+          <div className="zoom-photo">
+            <img src={zoom} alt="Enlarged specimen photograph" />
           </div>
-
-          <div className="flex gap-3 md:ml-auto">
-            <button onClick={onClose} className="px-5 py-2 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition font-medium">Close</button>
-            {step === 2 && !readOnly && (
-              <button
-                onClick={handleSave}
-                disabled={!pinPosition}
-                className="bg-indigo-600 text-white px-6 py-2 rounded-lg shadow-md hover:bg-indigo-700 hover:shadow-lg transition flex items-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Save size={18} /> Save specimen
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+        </Dialog>
+      )}
+    </Dialog>
   );
-};
+}
