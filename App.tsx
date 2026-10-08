@@ -68,6 +68,9 @@ export default function App() {
     insect: Insect | null;
   } | null>(null);
   const [review, setReview] = useState<CollectionData | null>(null);
+  const [reviewCollapsed, setReviewCollapsed] = useState<
+    Record<string, boolean>
+  >({});
   const [library, setLibrary] = useState<CollectionData[] | null>(null),
     [settings, setSettings] = useState(false);
   const [drawerSettings, setDrawerSettings] = useState<Drawer | null>(null);
@@ -303,6 +306,7 @@ export default function App() {
         );
       const loaded = normaliseCollection(JSON.parse(await file.text()));
       if (importMode.current === "review") {
+        setReviewCollapsed({});
         setReview(loaded);
         setNotice(
           "Opened for read-only review. Your own collection is unchanged.",
@@ -340,6 +344,37 @@ export default function App() {
     setLibrary(null);
     clearFilters();
     setView("drawer");
+  };
+  const toggleDrawer = (drawer: Drawer) => {
+    if (readOnly) {
+      setReviewCollapsed((previous) => ({
+        ...previous,
+        [drawer.id]: !(previous[drawer.id] ?? drawer.isCollapsed),
+      }));
+      return;
+    }
+    change((current) => ({
+      ...current,
+      drawers: current.drawers.map((item) =>
+        item.id === drawer.id
+          ? { ...item, isCollapsed: !item.isCollapsed }
+          : item,
+      ),
+    }));
+  };
+  const openDrawer = (drawer: Drawer) => {
+    setSelectedDrawer(drawer.id);
+    setView("drawer");
+    if (readOnly) {
+      setReviewCollapsed((previous) => ({ ...previous, [drawer.id]: false }));
+    } else if (drawer.isCollapsed) {
+      change((current) => ({
+        ...current,
+        drawers: current.drawers.map((item) =>
+          item.id === drawer.id ? { ...item, isCollapsed: false } : item,
+        ),
+      }));
+    }
   };
   const renameDrawer = () => {
     if (!drawerSettings) return;
@@ -465,11 +500,10 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">
-            <img src="./logo.png" alt="Entomology at Harper Adams" />
+            <img src="./hau-logo.png" alt="Harper Adams University" />
           </div>
           <div>
             <strong>Virtual Entobox</strong>
-            <span>HARPER ADAMS UNIVERSITY</span>
           </div>
         </div>
         <div className="top-actions">
@@ -480,7 +514,11 @@ export default function App() {
             {saveStatus === "Saved on this device" ? <Check size={15} /> : null}
             {saveStatus}
           </span>
-          <button className="button top-button" aria-label="Collections" onClick={openLibrary}>
+          <button
+            className="button top-button"
+            aria-label="Collections"
+            onClick={openLibrary}
+          >
             <FolderOpen size={17} />
             <span>Collections</span>
           </button>
@@ -536,8 +574,7 @@ export default function App() {
                 key={d.id}
                 className={`side-link ${selectedDrawer === d.id && view !== "guide" ? "active" : ""}`}
                 onClick={() => {
-                  setSelectedDrawer(d.id);
-                  setView("drawer");
+                  openDrawer(d);
                 }}
               >
                 <span className="drawer-index">
@@ -582,7 +619,6 @@ export default function App() {
               <span>Review a submission</span>
             </button>
             <div className="local-note">
-              <Leaf size={21} />
               <strong>A collection through observation</strong>
               <p>
                 Photograph, identify and document. Export your collection
@@ -680,7 +716,7 @@ export default function App() {
                   </>
                 )}
               </div>
-              {!readOnly && (
+              {!readOnly && view !== "guide" && (
                 <button
                   className="button primary"
                   onClick={() => addSpecimen()}
@@ -721,7 +757,7 @@ export default function App() {
             </span>
           </div>
           {view === "guide" ? (
-            <Guide onAdd={() => addSpecimen()} readOnly={readOnly} />
+            <Guide />
           ) : (
             <>
               <div className="collection-toolbar">
@@ -822,11 +858,18 @@ export default function App() {
               {view === "drawer" ? (
                 <div className="drawers">
                   {displayedDrawers.map((d, n) => {
+                    const collapsed = readOnly
+                      ? (reviewCollapsed[d.id] ?? d.isCollapsed)
+                      : d.isCollapsed;
                     const records = filtered.filter((i) => i.drawerId === d.id);
                     const slots = new Map(records.map((i) => [i.slotIndex, i]));
                     if (hasFilter && !records.length) return null;
                     return (
-                      <section className="collection-drawer" key={d.id}>
+                      <section
+                        className="collection-drawer"
+                        key={d.id}
+                        data-collapsed={collapsed}
+                      >
                         <header className="drawer-heading">
                           <div>
                             <span className="drawer-number">
@@ -835,7 +878,18 @@ export default function App() {
                                 "0",
                               )}
                             </span>
-                            <h2>{d.title}</h2>
+                            <h2>
+                              <button
+                                className="drawer-toggle"
+                                onClick={() => toggleDrawer(d)}
+                                aria-label={`${collapsed ? "Expand" : "Collapse"} ${d.title}`}
+                                aria-expanded={!collapsed}
+                                aria-controls={`drawer-content-${d.id}`}
+                              >
+                                <ChevronDown size={18} aria-hidden="true" />
+                                {d.title}
+                              </button>
+                            </h2>
                             <span className="caption">
                               {
                                 c.insects.filter((i) => i.drawerId === d.id)
@@ -854,7 +908,11 @@ export default function App() {
                             </button>
                           )}
                         </header>
-                        <div className="specimen-grid">
+                        <div
+                          className="specimen-grid"
+                          id={`drawer-content-${d.id}`}
+                          hidden={collapsed}
+                        >
                           {hasFilter
                             ? records
                                 .sort((a, b) => a.slotIndex - b.slotIndex)
@@ -1193,7 +1251,7 @@ export default function App() {
     </>
   );
 }
-function Guide({ onAdd, readOnly }: { onAdd: () => void; readOnly: boolean }) {
+function Guide() {
   return (
     <article className="practical-guide">
       <div className="guide-heading">
@@ -1312,11 +1370,6 @@ function Guide({ onAdd, readOnly }: { onAdd: () => void; readOnly: boolean }) {
           leaves your own work unchanged.
         </p>
       </section>
-      {!readOnly && (
-        <button className="button primary" onClick={onAdd}>
-          <Plus size={17} /> Add a specimen
-        </button>
-      )}
     </article>
   );
 }

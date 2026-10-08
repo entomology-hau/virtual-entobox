@@ -1190,11 +1190,14 @@ a {
 .editor-content {
   display: grid;
   grid-template-columns: 38% 62%;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   min-height: 0;
   height: min(690px, calc(100dvh - 188px));
 }
 .specimen-preview {
+  min-height: 0;
+  scrollbar-gutter: stable;
   padding: 24px;
   background: var(--raised);
   border-right: 1px solid var(--border);
@@ -1344,6 +1347,8 @@ a {
 }
 .specimen-fields {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -1371,7 +1376,12 @@ a {
 }
 .editor-panel {
   padding: 25px 27px;
-  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 .editor-panel h3 {
   font-size: 1.1rem;
@@ -2144,9 +2154,14 @@ a {
     font-size: 0.8125rem;
     padding: 15px 8px;
   }
+  .specimen-fields {
+    overflow: visible;
+  }
   .editor-panel {
     padding: 20px 17px;
     overflow: visible;
+    flex: none;
+    scrollbar-gutter: auto;
   }
   .field-grid {
     gap: 16px 12px;
@@ -2456,5 +2471,106 @@ a {
     align-self: flex-start;
     margin: 0;
     max-width: 100%;
+  }
+}
+
+/* University wordmark, drawer controls and visible scrolling affordances. */
+.brand-mark {
+  width: 198px;
+  height: 56px;
+  border: 0;
+  border-right: 1px solid #ffffff40;
+  border-radius: 0;
+  padding: 0 18px 0 0;
+}
+.brand strong {
+  font-weight: 500;
+}
+.drawer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 0;
+  min-height: 38px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.drawer-toggle:hover {
+  color: var(--accent);
+}
+.drawer-toggle svg {
+  flex: none;
+  transition: transform 0.15s;
+}
+.drawer-toggle[aria-expanded="false"] svg {
+  transform: rotate(-90deg);
+}
+.specimen-grid[hidden] {
+  display: none;
+}
+.collection-drawer[data-collapsed="true"] .drawer-heading {
+  border-bottom: 0;
+}
+.editor-panel,
+.specimen-preview,
+.editor-content {
+  scrollbar-width: auto;
+  scrollbar-color: var(--strong-border) var(--raised);
+}
+.editor-panel::-webkit-scrollbar,
+.specimen-preview::-webkit-scrollbar,
+.editor-content::-webkit-scrollbar {
+  width: 12px;
+}
+.editor-panel::-webkit-scrollbar-track,
+.specimen-preview::-webkit-scrollbar-track,
+.editor-content::-webkit-scrollbar-track {
+  background: var(--raised);
+}
+.editor-panel::-webkit-scrollbar-thumb,
+.specimen-preview::-webkit-scrollbar-thumb,
+.editor-content::-webkit-scrollbar-thumb {
+  background: var(--strong-border);
+  border: 3px solid var(--raised);
+  border-radius: 7px;
+}
+@media (max-width: 680px) {
+  .brand {
+    gap: 11px;
+  }
+  .brand-mark {
+    display: flex;
+    width: 120px;
+    height: 41px;
+    padding: 0 11px 0 0;
+  }
+  .brand strong {
+    font-size: 1rem;
+  }
+  .drawer-heading h2 {
+    flex: 1;
+    min-width: 0;
+  }
+  .editor-content {
+    scrollbar-gutter: stable;
+  }
+  .specimen-preview {
+    scrollbar-gutter: auto;
+  }
+}
+@media (max-width: 380px) {
+  .brand-mark {
+    width: 98px;
+    height: 36px;
+    padding-right: 8px;
+  }
+  .brand {
+    gap: 8px;
+  }
+  .brand strong {
+    font-size: 0.9375rem;
   }
 }
